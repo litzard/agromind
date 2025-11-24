@@ -1,0 +1,1231 @@
+import React, { useState, useEffect } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    TouchableOpacity,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Modal,
+    Dimensions,
+} from 'react-native';
+import { Link, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { LinearGradient as ExpoLinearGradient } from 'expo-linear-gradient';
+import { useAuth } from '../../context/AuthContext';
+import { useTutorial } from '../../context/TutorialContext';
+import { useTheme } from '../../context/ThemeContext';
+import { Card } from '../../components/Card';
+import { Header } from '../../components/Header';
+import { TutorialOverlay } from '../../components/TutorialOverlay';
+import { WelcomeModal } from '../../components/WelcomeModal';
+import { Zone } from '../../types';
+import { Colors, Spacing, FontSizes, BorderRadius } from '../../styles/theme';
+import { API_CONFIG } from '../../constants/api';
+import { getLocalWeather, getUserLocation } from '../../services/weatherService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const { width } = Dimensions.get('window');
+
+export default function DashboardScreen() {
+    const { user } = useAuth();
+    const { colors } = useTheme();
+    const { startTutorial, hasCompletedTutorial, isActive: tutorialActive, currentStep, steps, setCurrentScreen } = useTutorial();
+    const [zones, setZones] = useState<Zone[]>([]);
+    const [activeZoneId, setActiveZoneId] = useState<string>('');
+    const [loading, setLoading] = useState(true);
+    const [showZoneSelector, setShowZoneSelector] = useState(false);
+    const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+    const [weather, setWeather] = useState<any>(null);
+    const [weatherLoading, setWeatherLoading] = useState(false);
+    const fadeAnim = React.useRef(new Animated.Value(0)).current;
+    const scaleAnim = React.useRef(new Animated.Value(1)).current;
+    const weatherIconScale = React.useRef(new Animated.Value(1)).current;
+    const sensorAnims = React.useRef([
+        new Animated.Value(0),
+        new Animated.Value(0),
+        new Animated.Value(0),
+    ]).current;
+    const hasAnimated = React.useRef(false);
+
+    const activeZone = zones.find(z => z.id.toString() === activeZoneId);
+
+    useFocusEffect(
+        React.useCallback(() => {
+            loadZones();
+            setCurrentScreen('dashboard');
+        }, [])
+    );
+
+    // Mostrar modal de bienvenida para usuarios nuevos
+    useEffect(() => {
+        const checkFirstVisit = async () => {
+            if (!loading && !hasCompletedTutorial) {
+                const hasSeenWelcome = await AsyncStorage.getItem('hasSeenWelcome');
+                if (!hasSeenWelcome) {
+                    setTimeout(() => {
+                        setShowWelcomeModal(true);
+                    }, 500);
+                }
+            }
+        };
+        checkFirstVisit();
+    }, [loading, hasCompletedTutorial]);
+
+    const handleStartTutorial = async () => {
+        await AsyncStorage.setItem('hasSeenWelcome', 'true');
+        setShowWelcomeModal(false);
+        startTutorial();
+    };
+
+    const handleSkipWelcome = async () => {
+        await AsyncStorage.setItem('hasSeenWelcome', 'true');
+        setShowWelcomeModal(false);
+    };
+
+    useEffect(() => {
+        if (zones.length > 0 && !activeZoneId) {
+            setActiveZoneId(zones[0].id.toString());
+        }
+    }, [zones, activeZoneId]);
+
+    useEffect(() => {
+        if (!loading && zones.length > 0 && !hasAnimated.current) {
+            hasAnimated.current = true;
+            
+            // Animación principal de fade-in
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 400,
+                useNativeDriver: true,
+            }).start();
+
+            // Animaciones escalonadas para sensores
+            Animated.stagger(150, sensorAnims.map(anim =>
+                Animated.spring(anim, {
+                    toValue: 1,
+                    friction: 8,
+                    tension: 40,
+                    useNativeDriver: true,
+                })
+            )).start();
+        }
+    }, [loading, zones.length]);
+
+    // Animación de bounce para ícono del clima
+    useEffect(() => {
+        if (weather) {
+            Animated.sequence([
+                Animated.timing(weatherIconScale, {
+                    toValue: 1.2,
+                    duration: 300,
+                    useNativeDriver: true,
+                }),
+                Animated.spring(weatherIconScale, {
+                    toValue: 1,
+                    friction: 3,
+                    tension: 40,
+                    useNativeDriver: true,
+                }),
+            ]).start();
+        }
+    }, [weather]);
+
+    // Cargar clima cuando cambia la zona activa
+    useEffect(() => {
+        const loadWeather = async () => {
+            if (!activeZone || !activeZone.config.useWeatherApi) {
+                setWeather(null);
+                return;
+            }
+
+            setWeatherLoading(true);
+            try {
+                // Obtener ubicación real del usuario
+                let location;
+                try {
+                    location = await getUserLocation();
+                } catch (locError: any) {
+                    console.warn('No se pudo obtener ubicación, usando default (CDMX):', locError.message);
+                    location = { lat: 19.4326, lon: -99.1332 }; // Fallback a CDMX
+                }
+                
+                const weatherData = await getLocalWeather(location.lat, location.lon);
+                setWeather(weatherData);
+            } catch (error) {
+                console.error('Error loading weather:', error);
+                setWeather(null);
+            } finally {
+                setWeatherLoading(false);
+            }
+        };
+
+        loadWeather();
+        // Recargar clima cada 10 minutos
+        const interval = setInterval(loadWeather, 600000);
+        return () => clearInterval(interval);
+    }, [activeZone?.id, activeZone?.config.useWeatherApi]);
+
+    const loadZones = async () => {
+        try {
+            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${user?.id}`);
+            if (response.ok) {
+                const data = await response.json();
+                setZones(data);
+            }
+        } catch (error) {
+            console.error('Error loading zones:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Polling automático cada 3 segundos para datos en tiempo real
+    useEffect(() => {
+        if (!user?.id) return;
+
+        const pollInterval = setInterval(() => {
+            loadZones();
+        }, 3000);
+
+        return () => clearInterval(pollInterval);
+    }, [user?.id]);
+
+    const toggleAutoMode = async () => {
+        if (!activeZone) return;
+
+        const currentZoneId = activeZone.id;
+        const currentZone = activeZone;
+
+        try {
+            const newAutoMode = !currentZone.config.autoMode;
+            const configToSend = {
+                ...currentZone.config,
+                autoMode: Boolean(newAutoMode),
+                useWeatherApi: Boolean(currentZone.config.useWeatherApi),
+                respectRainForecast: Boolean(currentZone.config.respectRainForecast),
+            };
+
+            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${currentZoneId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: configToSend })
+            });
+
+            if (response.ok) {
+                setZones(prev => prev.map(z =>
+                    z.id === currentZoneId
+                        ? { ...z, config: { ...z.config, autoMode: newAutoMode } }
+                        : z
+                ));
+            }
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo cambiar el modo automático');
+        }
+    };
+
+    const handleManualWater = async () => {
+        if (!activeZone) return;
+
+        const currentZoneId = activeZone.id;
+
+        // Verificar que el tanque tenga agua
+        if (activeZone.sensors.tankLevel <= 5) {
+            Alert.alert('Tanque Vacío', 'No hay suficiente agua en el tanque para regar.');
+            return;
+        }
+
+        // Verificar que la bomba no esté ya funcionando
+        if (activeZone.status.pump === 'ON') {
+            return;
+        }
+
+        try {
+            // Animación de botón al presionar
+            Animated.sequence([
+                Animated.timing(scaleAnim, {
+                    toValue: 0.95,
+                    duration: 100,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(scaleAnim, {
+                    toValue: 1,
+                    duration: 100,
+                    useNativeDriver: true,
+                }),
+            ]).start();
+
+            // Encender la bomba
+            const statusToSend = {
+                ...activeZone.status,
+                pump: 'ON'
+            };
+
+            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${currentZoneId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: statusToSend })
+            });
+
+            if (response.ok) {
+                setZones(prev => prev.map(z =>
+                    z.id === currentZoneId
+                        ? { ...z, status: { ...z.status, pump: 'ON' } }
+                        : z
+                ));
+
+                // Apagar la bomba después de 5 segundos
+                setTimeout(async () => {
+                    const offStatusToSend = {
+                        ...activeZone.status,
+                        pump: 'OFF',
+                        lastWatered: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                    };
+
+                    const offResponse = await fetch(`${API_CONFIG.BASE_URL}/zones/${currentZoneId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: offStatusToSend })
+                    });
+
+                    if (offResponse.ok) {
+                        setZones(prev => prev.map(z =>
+                            z.id === currentZoneId
+                                ? { ...z, status: { ...z.status, pump: 'OFF', lastWatered: offStatusToSend.lastWatered } }
+                                : z
+                        ));
+                    }
+                }, 5000);
+            }
+        } catch (error) {
+            Alert.alert('Error', 'No se pudo iniciar el riego manual');
+        }
+    };
+
+    const CircularProgress = ({ value, threshold }: { value: number, threshold: number }) => {
+        const size = 160;
+        const strokeWidth = 10;
+        const radius = (size - strokeWidth) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const progress = (value / 100) * circumference;
+        const offset = circumference - progress;
+        
+        const isLow = value < threshold;
+        const gradientId = isLow ? 'gradientRed' : 'gradientGreen';
+        
+        return (
+            <View style={styles.progressContainer}>
+                <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>
+                    <Defs>
+                        <LinearGradient id="gradientGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <Stop offset="0%" stopColor="#10B981" stopOpacity="1" />
+                            <Stop offset="100%" stopColor="#6EE7B7" stopOpacity="1" />
+                        </LinearGradient>
+                        <LinearGradient id="gradientRed" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <Stop offset="0%" stopColor="#EF4444" stopOpacity="1" />
+                            <Stop offset="100%" stopColor="#FCA5A5" stopOpacity="1" />
+                        </LinearGradient>
+                    </Defs>
+                    {/* Background circle */}
+                    <Circle
+                        cx={size / 2}
+                        cy={size / 2}
+                        r={radius}
+                        stroke={Colors.gray[100]}
+                        strokeWidth={strokeWidth}
+                        fill="none"
+                    />
+                    {/* Progress circle */}
+                    <Circle
+                        cx={size / 2}
+                        cy={size / 2}
+                        r={radius}
+                        stroke={`url(#${gradientId})`}
+                        strokeWidth={strokeWidth}
+                        fill="none"
+                        strokeDasharray={circumference}
+                        strokeDashoffset={offset}
+                        strokeLinecap="round"
+                    />
+                </Svg>
+                <View style={styles.progressContent}>
+                    <Text style={[styles.progressValue, { color: colors.text }]}>{Math.round(value)}<Text style={[styles.progressUnit, { color: colors.textSecondary }]}>%</Text></Text>
+                    <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>ACTUAL</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: isLow ? Colors.red[50] : Colors.emerald[50] }]}>
+                        <Text style={[styles.statusText, { color: isLow ? Colors.red[500] : Colors.emerald[500] }]}>
+                            {isLow ? 'CRÍTICO' : 'ÓPTIMO'}
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
+    if (loading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={Colors.emerald[600]} />
+            </View>
+        );
+    }
+
+    if (zones.length === 0) {
+        return (
+            <View style={styles.container}>
+                <Header />
+                <View style={styles.emptyContainer}>
+                    <Ionicons name="leaf-outline" size={80} color={Colors.emerald[300]} style={{ marginBottom: Spacing.lg }} />
+                    <Text style={styles.emptyText}>No tienes zonas configuradas</Text>
+                    <Text style={styles.emptySubtext}>Crea tu primera zona para comenzar</Text>
+                    <Link href="/add-zone" asChild>
+                        <TouchableOpacity 
+                            style={styles.addZoneButton}
+                            // @ts-ignore
+                            nativeID="add-zone-button"
+                        >
+                            <Ionicons name="add-circle" size={24} color="#fff" />
+                            <Text style={styles.addZoneButtonText}>Agregar Zona</Text>
+                        </TouchableOpacity>
+                    </Link>
+                </View>
+                <WelcomeModal
+                    visible={showWelcomeModal}
+                    userName={user?.name || ''}
+                    onStartTutorial={handleStartTutorial}
+                    onSkip={handleSkipWelcome}
+                />
+                <TutorialOverlay />
+            </View>
+        );
+    }
+
+    if (!activeZone) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={Colors.emerald[600]} />
+            </View>
+        );
+    }
+
+    return (
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <Header />
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+                <TutorialOverlay />
+                <Animated.View style={{ opacity: fadeAnim }}>
+                    {/* Zone Info Header */}
+                    <View style={styles.zoneHeader}>
+                        <View style={styles.zoneTitleRow}>
+                            <Text style={[styles.zoneName, { color: colors.text }]}>{activeZone.name}</Text>
+                            <TouchableOpacity
+                                style={styles.zoneSelectorButton}
+                                onPress={() => setShowZoneSelector(true)}
+                            >
+                                <Ionicons name="chevron-down" size={20} color={Colors.gray[400]} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.zoneStatusRow}>
+                            <View style={[styles.typeTag, { backgroundColor: Colors.emerald[50] }]}>
+                                <Ionicons name={activeZone.type === 'Indoor' ? 'home' : 'leaf'} size={14} color={Colors.emerald[600]} />
+                                <Text style={styles.typeText}>{activeZone.type === 'Indoor' ? 'Interior' : 'Exterior'}</Text>
+                            </View>
+                            <View style={styles.connectionStatus}>
+                                <View style={[styles.statusDot, { backgroundColor: Colors.emerald[500] }]} />
+                                <Text style={styles.connectionText}>Sistema ONLINE</Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* Main Card */}
+                    <Card style={[styles.mainCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        {/* Auto Mode Toggle - Top Right */}
+                        <View style={styles.autoModeTopRight}>
+                            <Text style={styles.autoModeLabel}>MODO AUTO</Text>
+                            <TouchableOpacity
+                                style={[styles.switch, activeZone.config.autoMode && styles.switchActive]}
+                                onPress={toggleAutoMode}
+                                // @ts-ignore
+                                nativeID="auto-mode-switch"
+                            >
+                                <View style={[styles.switchThumb, activeZone.config.autoMode && styles.switchThumbActive]}>
+                                    <Ionicons name="flash" size={12} color={activeZone.config.autoMode ? Colors.emerald[600] : Colors.gray[400]} />
+                                </View>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Moisture Circle - Centered */}
+                        <View style={styles.moistureSection}>
+                            <View 
+                                // @ts-ignore
+                                nativeID="moisture-circle"
+                            >
+                                <CircularProgress 
+                                    value={activeZone.sensors.soilMoisture} 
+                                    threshold={activeZone.config.moistureThreshold}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Secondary sensors - minimal style */}
+                        <View style={styles.sensorsRowMinimal}>
+                            {/* Temperature */}
+                            <Animated.View 
+                                style={[
+                                    styles.sensorMinimal,
+                                    {
+                                        opacity: sensorAnims[0],
+                                        transform: [{ 
+                                            translateY: sensorAnims[0].interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [20, 0]
+                                            })
+                                        }]
+                                    }
+                                ]}
+                            >
+                                <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>TEMPERATURA</Text>
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.temperature}°</Text>
+                                <Ionicons name="thermometer" size={24} color={Colors.orange[500]} />
+                            </Animated.View>
+
+                            {/* Tank Level */}
+                            <Animated.View 
+                                style={[
+                                    styles.sensorMinimal,
+                                    {
+                                        opacity: sensorAnims[1],
+                                        transform: [{ 
+                                            translateY: sensorAnims[1].interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [20, 0]
+                                            })
+                                        }]
+                                    }
+                                ]}
+                            >
+                                <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>TANQUE</Text>
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.tankLevel.toFixed(0)}%</Text>
+                                <Ionicons name="water" size={24} color={activeZone.sensors.tankLevel < 20 ? Colors.red[500] : Colors.blue[500]} />
+                            </Animated.View>
+
+                            {/* Light Level */}
+                            <Animated.View 
+                                style={[
+                                    styles.sensorMinimal,
+                                    {
+                                        opacity: sensorAnims[2],
+                                        transform: [{ 
+                                            translateY: sensorAnims[2].interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [20, 0]
+                                            })
+                                        }]
+                                    }
+                                ]}
+                            >
+                                <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>LUZ</Text>
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.lightLevel}%</Text>
+                                <Ionicons name="sunny" size={24} color={Colors.yellow[500]} />
+                            </Animated.View>
+                        </View>
+
+                        {/* Pump status - minimal */}
+                        <View style={styles.pumpStatusMinimal}>
+                            <View style={[styles.pumpDot, { 
+                                backgroundColor: activeZone.status.pump === 'ON' ? Colors.emerald[500] : 
+                                                activeZone.status.pump === 'LOCKED' ? Colors.red[500] : Colors.gray[300] 
+                            }]} />
+                            <Text style={[styles.pumpTextMinimal, { color: colors.textSecondary }]}>
+                                {activeZone.status.pump === 'ON' ? 'Bomba activa' : 
+                                 activeZone.status.pump === 'LOCKED' ? 'Bomba bloqueada' : 'Bomba inactiva'}
+                            </Text>
+                        </View>
+
+                        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                            <TouchableOpacity
+                                onPress={handleManualWater}
+                                disabled={activeZone.status.pump === 'ON'}
+                                activeOpacity={activeZone.status.pump === 'ON' ? 1 : 0.7}
+                                // @ts-ignore
+                                nativeID="manual-water-button"
+                            >
+                                <ExpoLinearGradient
+                                    colors={
+                                        activeZone.status.pump === 'ON' 
+                                            ? ['#10B981', '#059669'] 
+                                            : ['#1E293B', '#0F172A']
+                                    }
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={[
+                                        styles.manualWaterButton,
+                                        activeZone.status.pump === 'ON' && styles.manualWaterButtonActive
+                                    ]}
+                                >
+                                    {activeZone.status.pump === 'ON' ? (
+                                        <>
+                                            <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                                            <Text style={styles.manualWaterText}>Regando...</Text>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Ionicons name="flash" size={20} color="#fff" style={{ marginRight: 8 }} />
+                                            <Text style={styles.manualWaterText}>Iniciar Riego Manual</Text>
+                                        </>
+                                    )}
+                                </ExpoLinearGradient>
+                            </TouchableOpacity>
+                        </Animated.View>
+                    </Card>
+
+                    {/* Weather Widget */}
+                    {activeZone.config.useWeatherApi && (
+                        <ExpoLinearGradient
+                            colors={['#38BDF8', '#2563EB']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.weatherCard}
+                        >
+                            {weatherLoading ? (
+                                <View style={styles.weatherLoading}>
+                                    <ActivityIndicator size="large" color="#fff" />
+                                    <Text style={styles.weatherLoadingText}>Cargando clima...</Text>
+                                </View>
+                            ) : weather ? (
+                                <>
+                                    <View style={styles.weatherHeader}>
+                                        <View>
+                                            <Text style={styles.weatherCity}>{weather.cityName || 'Local'}</Text>
+                                            <Text style={styles.weatherTemp}>{weather.temp}°</Text>
+                                            <Text style={styles.weatherDescription}>{weather.description}</Text>
+                                        </View>
+                                        <Animated.View style={[
+                                            styles.weatherIconContainer,
+                                            { transform: [{ scale: weatherIconScale }] }
+                                        ]}>
+                                            <Ionicons 
+                                                name={weather.condition === 'Rain' ? 'rainy' : 'sunny'} 
+                                                size={48} 
+                                                color="#fff" 
+                                            />
+                                        </Animated.View>
+                                    </View>
+                                    <View style={styles.weatherFooter}>
+                                        <Text style={styles.weatherRainLabel}>Probabilidad Lluvia</Text>
+                                        <Text style={styles.weatherRainValue}>{weather.rainProbability}%</Text>
+                                    </View>
+                                    <View style={styles.weatherProgressBar}>
+                                        <View style={[styles.weatherProgressFill, { width: `${weather.rainProbability}%` }]} />
+                                    </View>
+                                </>
+                            ) : (
+                                <View style={styles.weatherError}>
+                                    <Ionicons name="cloud-offline" size={48} color="rgba(255,255,255,0.7)" />
+                                    <Text style={styles.weatherErrorText}>No se pudo cargar el clima</Text>
+                                </View>
+                            )}
+                        </ExpoLinearGradient>
+                    )}
+
+                </Animated.View>
+            </ScrollView>
+
+            {/* Zone Selector Modal */}
+            <Modal
+                visible={showZoneSelector}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowZoneSelector(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setShowZoneSelector(false)}
+                >
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Seleccionar Zona</Text>
+                        {zones.map(zone => (
+                            <TouchableOpacity
+                                key={zone.id}
+                                style={[
+                                    styles.modalItem,
+                                    activeZoneId === zone.id.toString() && styles.modalItemActive
+                                ]}
+                                onPress={() => {
+                                    setActiveZoneId(zone.id.toString());
+                                    setShowZoneSelector(false);
+                                }}
+                            >
+                                <Text style={[
+                                    styles.modalItemText,
+                                    activeZoneId === zone.id.toString() && styles.modalItemTextActive
+                                ]}>{zone.name}</Text>
+                                {activeZoneId === zone.id.toString() && (
+                                    <Ionicons name="checkmark" size={20} color={Colors.emerald[600]} />
+                                )}
+                            </TouchableOpacity>
+                        ))}
+                        <Link href="/add-zone" asChild>
+                            <TouchableOpacity style={styles.modalAddItem}>
+                                <Ionicons name="add" size={20} color={Colors.emerald[600]} />
+                                <Text style={styles.modalAddItemText}>Agregar nueva zona</Text>
+                            </TouchableOpacity>
+                        </Link>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
+
+            <WelcomeModal
+                visible={showWelcomeModal}
+                userName={user?.name || ''}
+                onStartTutorial={handleStartTutorial}
+                onSkip={handleSkipWelcome}
+            />
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: Colors.gray[50],
+    },
+    scrollContent: {
+        padding: Spacing.lg,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyText: {
+        fontSize: FontSizes.xl,
+        fontWeight: '700',
+        color: Colors.gray[700],
+        marginBottom: Spacing.xs,
+        textAlign: 'center',
+    },
+    emptySubtext: {
+        fontSize: FontSizes.base,
+        color: Colors.gray[500],
+        marginBottom: Spacing.xl,
+        textAlign: 'center',
+    },
+    addZoneButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.emerald[600],
+        paddingHorizontal: Spacing.xl,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.full,
+        gap: Spacing.sm,
+    },
+    addZoneButtonText: {
+        color: '#fff',
+        fontSize: FontSizes.base,
+        fontWeight: '600',
+    },
+    zoneHeader: {
+        marginBottom: Spacing.lg,
+    },
+    zoneTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginBottom: Spacing.xs,
+    },
+    zoneName: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: Colors.gray[900],
+        letterSpacing: -0.5,
+    },
+    zoneSelectorButton: {
+        padding: Spacing.xs,
+    },
+    zoneStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    typeTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+    },
+    typeText: {
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+        color: Colors.emerald[700],
+    },
+    connectionStatus: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    statusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    connectionText: {
+        fontSize: FontSizes.xs,
+        fontWeight: '600',
+        color: Colors.gray[400],
+    },
+    mainCard: {
+        marginBottom: Spacing.lg,
+        padding: Spacing.lg,
+        position: 'relative',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.06,
+        shadowRadius: 16,
+        elevation: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.05)',
+    },
+    autoModeTopRight: {
+        position: 'absolute',
+        top: Spacing.lg,
+        right: Spacing.lg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        zIndex: 10,
+    },
+    moistureSection: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: Spacing.xl,
+        marginTop: Spacing.lg,
+        paddingTop: Spacing.lg,
+        borderTopWidth: 1,
+        borderTopColor: Colors.gray[100],
+    },
+    sensorsRowMinimal: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        paddingHorizontal: Spacing.xl,
+        paddingTop: Spacing.md,
+        paddingBottom: Spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.gray[100],
+    },
+    sensorMinimal: {
+        alignItems: 'center',
+        gap: 6,
+        flex: 1,
+    },
+    sensorMinimalLabel: {
+        fontSize: 9,
+        fontWeight: '600',
+        color: Colors.gray[400],
+        letterSpacing: 0.3,
+        textTransform: 'uppercase',
+    },
+    sensorMinimalValue: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.gray[900],
+        marginVertical: 4,
+    },
+    pumpStatusMinimal: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.sm,
+        marginTop: Spacing.xl,
+        marginBottom: Spacing.md,
+    },
+    pumpDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    pumpTextMinimal: {
+        fontSize: FontSizes.sm,
+        fontWeight: '600',
+        color: Colors.gray[600],
+    },
+    moistureTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: Spacing.md,
+    },
+    moistureTitleCentered: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: Colors.gray[400],
+        letterSpacing: 1,
+        textAlign: 'center',
+        marginBottom: Spacing.md,
+    },
+    iconBox: {
+        width: 32,
+        height: 32,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    cardTitle: {
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+        color: Colors.gray[500],
+        letterSpacing: 0.5,
+    },
+    autoModeContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    autoModeLabel: {
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+        color: Colors.gray[400],
+    },
+    switch: {
+        width: 44,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: Colors.gray[200],
+        padding: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    switchActive: {
+        backgroundColor: Colors.emerald[500],
+        shadowColor: Colors.emerald[600],
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    switchThumb: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: '#fff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+    switchThumbActive: {
+        transform: [{ translateX: 20 }],
+    },
+    sensorsRow: {
+        flexDirection: 'row',
+        alignItems: 'stretch',
+        justifyContent: 'space-between',
+        marginTop: Spacing.xl,
+        paddingTop: Spacing.xl,
+        borderTopWidth: 1,
+        borderTopColor: Colors.gray[100],
+        gap: Spacing.lg,
+    },
+    sensorColumn: {
+        flex: 1,
+        alignItems: 'center',
+        gap: 8,
+    },
+    sensorDivider: {
+        width: 2,
+        alignSelf: 'stretch',
+        backgroundColor: Colors.gray[200],
+        borderRadius: 1,
+    },
+    sensorRowLabel: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: Colors.gray[400],
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        marginTop: 4,
+    },
+    sensorRowValue: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: Colors.gray[900],
+        marginVertical: 6,
+    },
+    sensorRowBar: {
+        width: '100%',
+        height: 6,
+        borderRadius: 3,
+        overflow: 'hidden',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+    },
+    sensorRowBarFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    progressContainer: {
+        width: 160,
+        height: 160,
+        justifyContent: 'center',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    progressContent: {
+        position: 'absolute',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    progressValue: {
+        fontSize: 42,
+        fontWeight: '800',
+        color: Colors.gray[900],
+    },
+    progressUnit: {
+        fontSize: 20,
+        color: Colors.gray[400],
+    },
+    progressLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: Colors.gray[400],
+        marginTop: 4,
+        marginBottom: Spacing.xs,
+    },
+    statusBadge: {
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    statusText: {
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+    },
+
+    statsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: Spacing.xl,
+    },
+    statItem: {
+        flex: 1,
+    },
+    statLabel: {
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+        color: Colors.gray[400],
+        marginBottom: 4,
+    },
+    statValue: {
+        fontSize: FontSizes.xl,
+        fontWeight: '700',
+        color: Colors.gray[900],
+    },
+    pumpStatusRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+        paddingTop: Spacing.md,
+        borderTopWidth: 1,
+        borderTopColor: Colors.gray[100],
+    },
+    pumpLabel: {
+        fontSize: FontSizes.sm,
+        fontWeight: '600',
+        color: Colors.gray[500],
+    },
+    pumpValue: {
+        fontSize: FontSizes.sm,
+        fontWeight: '700',
+    },
+    manualWaterButton: {
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+    manualWaterButtonActive: {
+        shadowColor: Colors.emerald[600],
+        shadowOpacity: 0.4,
+    },
+    manualWaterText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: FontSizes.sm,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        paddingBottom: Spacing.xxl,
+    },
+    modalTitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: '700',
+        color: Colors.gray[900],
+        marginBottom: Spacing.md,
+    },
+    modalItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.gray[100],
+    },
+    modalItemActive: {
+        backgroundColor: Colors.emerald[50],
+        marginHorizontal: -Spacing.lg,
+        paddingHorizontal: Spacing.lg,
+    },
+    modalItemText: {
+        fontSize: FontSizes.base,
+        color: Colors.gray[700],
+    },
+    modalItemTextActive: {
+        color: Colors.emerald[700],
+        fontWeight: '600',
+    },
+    modalAddItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        paddingVertical: Spacing.md,
+        marginTop: Spacing.sm,
+    },
+    modalAddItemText: {
+        color: Colors.emerald[600],
+        fontWeight: '600',
+        fontSize: FontSizes.base,
+    },
+    // Weather Widget Styles
+    weatherCard: {
+        marginTop: Spacing.lg,
+        padding: Spacing.xl,
+        borderRadius: BorderRadius.xl,
+        overflow: 'hidden',
+        shadowColor: Colors.blue[200],
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
+    },
+    weatherLoading: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: Spacing.xl,
+    },
+    weatherLoadingText: {
+        color: '#fff',
+        marginTop: Spacing.sm,
+        fontSize: FontSizes.sm,
+    },
+    weatherHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: Spacing.lg,
+    },
+    weatherCity: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: FontSizes.xs,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    weatherTemp: {
+        color: '#fff',
+        fontSize: 48,
+        fontWeight: '700',
+        marginTop: 4,
+    },
+    weatherDescription: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: FontSizes.sm,
+        fontWeight: '500',
+        marginTop: 4,
+        textTransform: 'capitalize',
+    },
+    weatherIconContainer: {
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        padding: Spacing.md,
+        borderRadius: BorderRadius.xl,
+    },
+    weatherFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+    },
+    weatherRainLabel: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: FontSizes.xs,
+        fontWeight: '500',
+    },
+    weatherRainValue: {
+        color: '#fff',
+        fontSize: FontSizes.sm,
+        fontWeight: '700',
+    },
+    weatherProgressBar: {
+        height: 6,
+        backgroundColor: 'rgba(0,0,0,0.1)',
+        borderRadius: 3,
+        overflow: 'hidden',
+    },
+    weatherProgressFill: {
+        height: '100%',
+        backgroundColor: '#fff',
+        borderRadius: 3,
+    },
+    weatherError: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: Spacing.xl,
+    },
+    weatherErrorText: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: FontSizes.sm,
+        marginTop: Spacing.sm,
+    },
+});

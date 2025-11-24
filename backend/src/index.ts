@@ -4,8 +4,10 @@ import dotenv from 'dotenv';
 import sequelize from './config/database';
 import authRoutes from './routes/auth';
 import zoneRoutes from './routes/zones';
+import iotRoutes from './routes/iot';
 import User from './models/User';
 import Zone from './models/Zone';
+import { simulator } from './services/simulator';
 
 dotenv.config();
 
@@ -75,7 +77,29 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/zones', zoneRoutes);
+app.use('/api/iot', iotRoutes);
+
+// Control del simulador
+app.post('/api/simulator/start/:zoneId', (req, res) => {
+  const zoneId = parseInt(req.params.zoneId);
+  simulator.startSimulation(zoneId);
+  res.json({ success: true, message: `Simulación iniciada para zona ${zoneId}` });
+});
+
+app.post('/api/simulator/stop/:zoneId', (req, res) => {
+  const zoneId = parseInt(req.params.zoneId);
+  simulator.stopSimulation(zoneId);
+  res.json({ success: true, message: `Simulación detenida para zona ${zoneId}` });
+});
+
+app.get('/api/simulator/status', (req, res) => {
+  const active = simulator.getActiveSimulations();
+  res.json({ active, count: active.length });
+});
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
+  console.log(`\n🤖 Para iniciar simulación IoT: POST http://localhost:${port}/api/simulator/start/:zoneId`);
+  console.log(`📡 Para datos ESP32: POST http://localhost:${port}/api/iot/sensor-data/:zoneId`);
+  console.log(`📥 Para comandos ESP32: GET http://localhost:${port}/api/iot/commands/:zoneId\n`);
 });

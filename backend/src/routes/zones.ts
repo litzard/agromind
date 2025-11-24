@@ -51,4 +51,48 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Control manual de bomba (para apps)
+router.post('/:id/pump', async (req: Request, res: Response) => {
+  try {
+    const zone = await Zone.findByPk(req.params.id);
+    if (!zone) {
+      return res.status(404).json({ error: 'Zona no encontrada' });
+    }
+
+    const { action } = req.body; // "ON" | "OFF"
+    const status = zone.status as any;
+    const sensors = zone.sensors as any;
+
+    // Validar que no esté bloqueada
+    if (status.pump === 'LOCKED' && action === 'ON') {
+      return res.status(400).json({ 
+        error: 'Bomba bloqueada por tanque vacío',
+        tankLevel: sensors.tankLevel 
+      });
+    }
+
+    // Validar nivel de tanque
+    if (sensors.tankLevel <= 5 && action === 'ON') {
+      return res.status(400).json({ 
+        error: 'Nivel de tanque muy bajo',
+        tankLevel: sensors.tankLevel 
+      });
+    }
+
+    await zone.update({ 
+      status: { 
+        ...status, 
+        pump: action,
+        lastWatered: action === 'OFF' && status.pump === 'ON' 
+          ? new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+          : status.lastWatered
+      } 
+    });
+
+    res.json({ success: true, pump: action });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

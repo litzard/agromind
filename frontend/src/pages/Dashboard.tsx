@@ -229,6 +229,15 @@ const Dashboard: React.FC = () => {
     };
 
     loadZones();
+
+    // Polling automático cada 3 segundos para datos en tiempo real
+    const pollInterval = setInterval(() => {
+      if (user?.id) {
+        loadZones();
+      }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
   }, [user?.id, activeZoneId]);
 
   // --- CARGAR CLIMA CUANDO CAMBIA LA ZONA ACTIVA ---

@@ -67,14 +67,29 @@ export default function AddZoneScreen() {
             });
 
             if (response.ok) {
+                const data = await response.json();
+                const newZoneId = data.id;
+
                 // Si el tutorial está activo, avanzar al siguiente paso
                 if (isActive) {
                     nextStep(); // Avanza automáticamente
                     router.back();
                 } else {
-                    Alert.alert('✅ Éxito', 'Zona creada correctamente', [
-                        { text: 'OK', onPress: () => router.back() }
-                    ]);
+                    Alert.alert(
+                        '✅ Zona Creada',
+                        '¿Deseas conectar un dispositivo ESP32 ahora?',
+                        [
+                            { 
+                                text: 'Ahora No', 
+                                onPress: () => router.back(),
+                                style: 'cancel'
+                            },
+                            { 
+                                text: 'Conectar ESP32', 
+                                onPress: () => router.replace(`/connect-esp32?zoneId=${newZoneId}`)
+                            }
+                        ]
+                    );
                 }
             } else {
                 throw new Error('Error al crear la zona');

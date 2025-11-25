@@ -1,18 +1,41 @@
 # 📡 Integración ESP32 con Agromind
 
+## 📁 Archivos ESP32
+
+El código completo del ESP32 está disponible en `/esp32/`:
+- **`agromind_sensor.ino`** - Código principal para producción
+- **`test_sensors.ino`** - Script de prueba y calibración de sensores
+- **`README.md`** - Guía completa de instalación, configuración y troubleshooting
+
+## 🔌 Configuración de Hardware
+
+| Componente | Pin ESP32 | Notas |
+|------------|-----------|-------|
+| DHT11 | D4 | Temperatura y humedad ambiental |
+| Humedad Suelo | D34 (ADC) | Sensor analógico |
+| LDR | D35 (ADC) | Sensor de luz con resistencia 10kΩ |
+| HC-SR04 Trig | D18 | Ultrasónico para nivel de agua |
+| HC-SR04 Echo | D19 | Ultrasónico (usar divisor si 5V) |
+| Relé | D5 | Control de bomba |
+
+📖 **Ver diagramas detallados de conexión en** `/esp32/README.md`
+
 ## 🔧 Endpoints API para ESP32
 
 ### 1. **Enviar Datos de Sensores** (POST)
 ```
-POST http://192.168.1.66:5000/api/iot/sensor-data/:zoneId
+POST http://192.168.1.66:5000/api/iot/sensor-data
 Content-Type: application/json
 
 {
-  "soilMoisture": 45.2,      // % (0-100)
-  "temperature": 24.5,        // °C
-  "humidity": 60.8,           // % (0-100)
-  "lightLevel": 85,           // % (0-100)
-  "tankLevel": 75.5           // % (0-100)
+  "zoneId": 1,
+  "sensors": {
+    "temperature": 24.5,        // °C
+    "soilMoisture": 45.2,       // % (0-100)
+    "waterLevel": 75.5,         // % (0-100) - nivel tanque
+    "lightLevel": 85,           // % (0-100)
+    "pumpStatus": false         // true = ON, false = OFF
+  }
 }
 ```
 
@@ -20,8 +43,12 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "message": "Datos actualizados",
-  "sensors": { /* todos los sensores actualizados */ }
+  "commands": {
+    "pumpState": false,         // true = encender, false = apagar
+    "autoMode": true,
+    "moistureThreshold": 30,
+    "wateringDuration": 10
+  }
 }
 ```
 

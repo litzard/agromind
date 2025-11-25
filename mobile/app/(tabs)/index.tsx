@@ -26,6 +26,7 @@ import { Zone } from '../../types';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../styles/theme';
 import { API_CONFIG } from '../../constants/api';
 import { getLocalWeather, getUserLocation } from '../../services/weatherService';
+import esp32Service from '../../services/esp32Service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
@@ -133,6 +134,27 @@ export default function DashboardScreen() {
             ]).start();
         }
     }, [weather]);
+
+    // Iniciar polling de datos ESP32 cuando cambia la zona activa
+    useEffect(() => {
+        if (!activeZone) return;
+
+        console.log(`📡 Iniciando polling para zona ${activeZone.id}`);
+        
+        esp32Service.startPolling(activeZone.id, (sensorData) => {
+            // Actualizar zona con datos en tiempo real
+            setZones(prev => prev.map(z => 
+                z.id === activeZone.id 
+                    ? { ...z, sensors: { ...z.sensors, ...sensorData } }
+                    : z
+            ));
+        }, 5000); // Polling cada 5 segundos
+
+        return () => {
+            console.log(`🛑 Deteniendo polling para zona ${activeZone.id}`);
+            esp32Service.stopPolling(activeZone.id);
+        };
+    }, [activeZone?.id]);
 
     // Cargar clima cuando cambia la zona activa
     useEffect(() => {
@@ -435,8 +457,10 @@ export default function DashboardScreen() {
                                 <Text style={styles.typeText}>{activeZone.type === 'Indoor' ? 'Interior' : 'Exterior'}</Text>
                             </View>
                             <View style={styles.connectionStatus}>
-                                <View style={[styles.statusDot, { backgroundColor: Colors.emerald[500] }]} />
-                                <Text style={styles.connectionText}>Sistema ONLINE</Text>
+                                <View style={[styles.statusDot, { backgroundColor: activeZone.status.connection === 'ONLINE' ? Colors.emerald[500] : Colors.red[500] }]} />
+                                <Text style={[styles.connectionText, { color: colors.textSecondary }]}>
+                                    ESP32 {activeZone.status.connection === 'ONLINE' ? 'ONLINE' : 'OFFLINE'}
+                                </Text>
                             </View>
                         </View>
                     </View>

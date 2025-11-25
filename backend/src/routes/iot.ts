@@ -4,34 +4,73 @@ import Zone from '../models/Zone';
 const router = express.Router();
 
 // ESP32 envía datos de sensores
-router.post('/sensor-data/:zoneId', async (req, res) => {
+router.post('/sensor-data', async (req, res) => {
   try {
-    const { zoneId } = req.params;
-    const { soilMoisture, temperature, humidity, lightLevel, tankLevel } = req.body;
+    const { zoneId, sensors } = req.body;
+
+    if (!zoneId || !sensors) {
+      return res.status(400).json({ error: 'Datos inválidos' });
+    }
 
     const zone = await Zone.findByPk(zoneId);
     if (!zone) {
       return res.status(404).json({ error: 'Zona no encontrada' });
     }
 
-    // Actualizar sensores
+    const currentStatus = zone.status as any;
     const currentSensors = zone.sensors as any;
+
+    // Actualizar sensores con datos del ESP32
     const updatedSensors = {
       ...currentSensors,
-      soilMoisture: soilMoisture ?? currentSensors.soilMoisture,
-      temperature: temperature ?? currentSensors.temperature,
-      humidity: humidity ?? currentSensors.humidity,
-      lightLevel: lightLevel ?? currentSensors.lightLevel,
-      tankLevel: tankLevel ?? currentSensors.tankLevel,
+      temperature: sensors.temperature ?? currentSensors.temperature,
+      soilMoisture: sensors.soilMoisture ?? currentSensors.soilMoisture,
+      waterLevel: sensors.waterLevel ?? currentSensors.waterLevel,
+      lightLevel: sensors.lightLevel ?? currentSensors.lightLevel,
+      tankLevel: sensors.waterLevel ?? currentSensors.tankLevel, // waterLevel = tankLevel
+      humidity: sensors.humidity ?? currentSensors.humidity,
     };
 
-    await zone.update({ sensors: updatedSensors });
+    // Actualizar estado de conexión
+    const updatedStatus = {
+      ...currentStatus,
+      connection: 'ONLINE',
+      lastUpdate: new Date().toISOString(),
+      pump: sensors.pumpStatus ? 'ON' : (currentStatus.pump === 'LOCKED' ? 'LOCKED' : 'OFF')
+    };
 
-    res.json({ 
-      success: true, 
-      message: 'Datos actualizados',
-      sensors: updatedSensors 
+    // Verificar si el tanque está muy bajo
+    if (updatedSensors.tankLevel <= 5) {
+      updatedStatus.pump = 'LOCKED';
+    }
+
+    await zone.update({
+      sensors: updatedSensors,
+      status: updatedStatus
     });
+
+    console.log(`📡 Datos recibidos de ESP32 - Zona ${zoneId}:`, sensors);
+
+    // Responder con comandos para el ESP32
+    const config = zone.config as any;
+    const response: any = {
+      success: true,
+      commands: {
+        pumpState: updatedStatus.pump === 'ON',
+        autoMode: config.autoMode || false,
+        moistureThreshold: config.moistureThreshold || 30,
+        wateringDuration: config.wateringDuration || 10
+      }
+    };
+
+    // Si está en modo automático y la humedad es baja, activar bomba
+    if (config.autoMode && updatedSensors.soilMoisture < config.moistureThreshold && updatedSensors.tankLevel > 5) {
+      response.commands.pumpState = true;
+      updatedStatus.pump = 'ON';
+      await zone.update({ status: updatedStatus });
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('Error actualizando sensores:', error);
     res.status(500).json({ error: 'Error del servidor' });
@@ -121,6 +160,50 @@ router.post('/heartbeat/:zoneId', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Error en heartbeat:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Health check endpoint para el ESP32
+router.get('/health', async (req, res) => {
+  res.json({ 
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    server: 'Agromind IoT'
+  });
+});
+
+// Obtener estado de conexión de un ESP32
+router.get('/connection-status/:zoneId', async (req, res) => {
+  try {
+    const zone = await Zone.findByPk(req.params.zoneId);
+    if (!zone) {
+      return res.status(404).json({ error: 'Zona no encontrada' });
+    }
+
+    const status = zone.status as any;
+    const lastUpdate = new Date(status.lastUpdate || 0);
+    const now = new Date();
+    const timeDiff = (now.getTime() - lastUpdate.getTime()) / 1000;
+
+    const isOnline = timeDiff < 30;
+
+    if (!isOnline && status.connection !== 'OFFLINE') {
+      await zone.update({
+        status: {
+          ...status,
+          connection: 'OFFLINE'
+        }
+      });
+    }
+
+    res.json({
+      connected: isOnline,
+      lastUpdate: status.lastUpdate,
+      secondsSinceLastUpdate: Math.round(timeDiff)
+    });
+  } catch (error) {
+    console.error('Error checking connection status:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

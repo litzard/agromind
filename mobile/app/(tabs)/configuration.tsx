@@ -129,6 +129,12 @@ export default function ConfigurationScreen() {
         updateConfig('moistureThreshold', newValue);
     };
 
+    const adjustWateringDuration = (delta: number) => {
+        if (!selectedZone) return;
+        const newValue = Math.max(5, Math.min(120, (selectedZone.config.wateringDuration || 10) + delta));
+        updateConfig('wateringDuration', newValue);
+    };
+
     if (loading) {
         return (
             <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
@@ -291,6 +297,86 @@ export default function ConfigurationScreen() {
                                 <View style={styles.labelRow}>
                                     <Ionicons name="water" size={16} color={colors.primary} />
                                     <Text style={[styles.thresholdLabel, { color: colors.textSecondary }]}>Húmedo</Text>
+                                </View>
+                            </View>
+                        </View>
+                    </Card>
+
+                    {/* Watering Duration */}
+                    <Card style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <View style={styles.cardHeader}>
+                            <View style={[styles.iconContainer, { backgroundColor: colors.primary + '15' }]}>
+                                <Ionicons name="time" size={24} color={colors.primary} />
+                            </View>
+                            <View style={styles.cardHeaderText}>
+                                <Text style={[styles.cardTitle, { color: colors.text }]}>Tiempo de Riego</Text>
+                                <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
+                                    Duración del riego automático y manual
+                                </Text>
+                            </View>
+                        </View>
+
+                        <View style={styles.thresholdContainer}>
+                            <View style={styles.thresholdDisplay}>
+                                <Text style={[styles.thresholdValue, { color: colors.text }]}>{selectedZone.config.wateringDuration || 10}</Text>
+                                <Text style={[styles.thresholdUnit, { color: colors.textSecondary }]}>seg</Text>
+                            </View>
+
+                            <View style={[styles.thresholdBar, { backgroundColor: colors.border }]}>
+                                <View
+                                    style={[
+                                        styles.thresholdFill,
+                                        { width: `${Math.min(100, ((selectedZone.config.wateringDuration || 10) / 120) * 100)}%`, backgroundColor: colors.primary }
+                                    ]}
+                                />
+                            </View>
+
+                            <View style={styles.thresholdButtons}>
+                                <TouchableOpacity
+                                    style={styles.thresholdButton}
+                                    onPress={() => adjustWateringDuration(-10)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="remove-circle" size={36} color={colors.primary} />
+                                    <Text style={[styles.thresholdButtonText, { color: colors.textSecondary }]}>-10</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.thresholdButton}
+                                    onPress={() => adjustWateringDuration(-5)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="remove" size={28} color={colors.primary} />
+                                    <Text style={[styles.thresholdButtonText, { color: colors.textSecondary }]}>-5</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.thresholdButton}
+                                    onPress={() => adjustWateringDuration(5)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="add" size={28} color={colors.primary} />
+                                    <Text style={[styles.thresholdButtonText, { color: colors.textSecondary }]}>+5</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.thresholdButton}
+                                    onPress={() => adjustWateringDuration(10)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="add-circle" size={36} color={colors.primary} />
+                                    <Text style={[styles.thresholdButtonText, { color: colors.textSecondary }]}>+10</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={styles.thresholdLabels}>
+                                <View style={styles.labelRow}>
+                                    <Ionicons name="flash-outline" size={16} color={colors.textSecondary} />
+                                    <Text style={[styles.thresholdLabel, { color: colors.textSecondary }]}>Rápido</Text>
+                                </View>
+                                <View style={styles.labelRow}>
+                                    <Ionicons name="hourglass" size={16} color={colors.primary} />
+                                    <Text style={[styles.thresholdLabel, { color: colors.textSecondary }]}>Prolongado</Text>
                                 </View>
                             </View>
                         </View>

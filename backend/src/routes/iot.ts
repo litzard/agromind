@@ -24,7 +24,11 @@ router.post('/sensor-data', async (req, res) => {
 
     const zone = await Zone.findByPk(zoneId);
     if (!zone) {
-      return res.status(404).json({ error: 'Zona no encontrada' });
+      // Zona no existe - ESP32 debe entrar en modo emparejamiento
+      return res.status(404).json({ 
+        error: 'Zona no encontrada',
+        pairingRequired: true 
+      });
     }
 
     const currentStatus = (zone.status as any) || {};

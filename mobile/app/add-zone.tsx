@@ -12,6 +12,7 @@ import {
     Animated,
     Clipboard,
     ActivityIndicator,
+    FlatList,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,37 +24,30 @@ import { TutorialOverlay } from '../components/TutorialOverlay';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../styles/theme';
 import { API_CONFIG } from '../constants/api';
 import { ActionModal, ActionModalButton } from '../components/ActionModal';
+import ESP32Service, { ESP32DeviceInfo } from '../services/esp32Service';
 
-type ConnectionStep = 'idle' | 'creating' | 'connecting' | 'testing' | 'success' | 'error';
+type ConnectionStep = 'idle' | 'creating' | 'scanning' | 'pairing' | 'testing' | 'success' | 'error';
 
 export default function AddZoneScreen() {
     const [name, setName] = useState('');
     const [type, setType] = useState<'Outdoor' | 'Indoor' | 'Greenhouse'>('Outdoor');
     const [loading, setLoading] = useState(false);
-    const [espConfig, setEspConfig] = useState({
-        ssid: '',
-        password: '',
-        serverUrl: (() => {
-            try {
-                const parsed = new URL(API_CONFIG.BASE_URL);
-                return `${parsed.protocol}//${parsed.host}`;
-            } catch (error) {
-                return API_CONFIG.BASE_URL.replace(/\/?api$/, '');
-            }
-        })()
-    });
+    const [manualIP, setManualIP] = useState('');
     
     // Estados para el flujo de conexión
     const [showConnectionModal, setShowConnectionModal] = useState(false);
     const [connectionStep, setConnectionStep] = useState<ConnectionStep>('idle');
     const [createdZoneId, setCreatedZoneId] = useState<number | null>(null);
+    const [discoveredDevices, setDiscoveredDevices] = useState<ESP32DeviceInfo[]>([]);
+    const [selectedDevice, setSelectedDevice] = useState<ESP32DeviceInfo | null>(null);
     const [connectionStatus, setConnectionStatus] = useState({
         zoneCreated: false,
-        espConnected: false,
+        espFound: false,
+        espPaired: false,
         sensorsReading: false,
     });
     const [errorMessage, setErrorMessage] = useState('');
-    const [configCopied, setConfigCopied] = useState(false);
+    const [scanProgress, setScanProgress] = useState(0);
     
     // Animaciones
     const progressAnim = useRef(new Animated.Value(0)).current;
@@ -73,7 +67,7 @@ export default function AddZoneScreen() {
     
     // Animación de pulso continuo durante conexión
     useEffect(() => {
-        if (connectionStep === 'connecting' || connectionStep === 'testing') {
+        if (connectionStep === 'scanning' || connectionStep === 'pairing' || connectionStep === 'testing') {
             const pulse = Animated.loop(
                 Animated.sequence([
                     Animated.timing(pulseAnim, {
@@ -130,24 +124,15 @@ export default function AddZoneScreen() {
         });
     };
 
-    const copyConfigToClipboard = () => {
-        if (!createdZoneId) return;
-        const config = `const char* ssid = "${espConfig.ssid}";
-const char* password = "${espConfig.password}";
-const char* serverUrl = "${espConfig.serverUrl}/api/iot/sensor-data";
-const int zoneId = ${createdZoneId};`;
-        
-        Clipboard.setString(config);
-        setConfigCopied(true);
-        setTimeout(() => setConfigCopied(false), 2000);
-    };
-
     const resetConnectionFlow = () => {
         setShowConnectionModal(false);
         setConnectionStep('idle');
-        setConnectionStatus({ zoneCreated: false, espConnected: false, sensorsReading: false });
+        setConnectionStatus({ zoneCreated: false, espFound: false, espPaired: false, sensorsReading: false });
         setCreatedZoneId(null);
+        setDiscoveredDevices([]);
+        setSelectedDevice(null);
         setErrorMessage('');
+        setScanProgress(0);
         progressAnim.setValue(0);
     };
 
@@ -171,16 +156,6 @@ const int zoneId = ${createdZoneId};`;
             return;
         }
 
-        if (!espConfig.ssid.trim() || !espConfig.password.trim()) {
-            showModal({
-                title: 'Configura tu WiFi',
-                message: 'El ESP32 necesita el nombre y la contraseña de la red para poder conectarse.',
-                icon: 'wifi',
-                buttons: [{ label: 'Completar', variant: 'primary', onPress: closeModal }]
-            });
-            return;
-        }
-
         // Iniciar flujo de conexión
         setShowConnectionModal(true);
         setConnectionStep('creating');
@@ -189,7 +164,7 @@ const int zoneId = ${createdZoneId};`;
         try {
             // Paso 1: Crear la zona
             Animated.timing(progressAnim, {
-                toValue: 0.33,
+                toValue: 0.25,
                 duration: 500,
                 useNativeDriver: false,
             }).start();
@@ -241,79 +216,50 @@ const int zoneId = ${createdZoneId};`;
             setCreatedZoneId(newZoneId);
             setConnectionStatus(prev => ({ ...prev, zoneCreated: true }));
             
-            // Paso 2: Esperar conexión del ESP32
-            setConnectionStep('connecting');
+            // Paso 2: Escanear la red buscando ESP32
+            setConnectionStep('scanning');
             Animated.timing(progressAnim, {
-                toValue: 0.66,
+                toValue: 0.5,
                 duration: 500,
                 useNativeDriver: false,
             }).start();
             
-            // Dar tiempo para que el usuario configure el ESP32
-            // y verificar si el ESP32 se conecta (máximo 30 segundos con reintentos)
-            let espConnected = false;
-            const maxAttempts = 10;
-            const delayBetweenAttempts = 3000; // 3 segundos
+            // Primero intentar con IP manual si se proporcionó
+            let devices: ESP32DeviceInfo[] = [];
             
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts));
-                
-                try {
-                    const zoneCheck = await fetch(`${API_CONFIG.BASE_URL}/zones/detail/${newZoneId}`);
-                    if (zoneCheck.ok) {
-                        const zoneData = await zoneCheck.json();
-                        
-                        // Verificar si el ESP32 ha enviado datos
-                        if (zoneData.status?.connection === 'ONLINE' || 
-                            zoneData.status?.lastUpdate || 
-                            zoneData.status?.hasSensorData) {
-                            espConnected = true;
-                            setConnectionStatus(prev => ({ ...prev, espConnected: true }));
-                            break;
-                        }
-                    }
-                } catch (error) {
-                    console.log('Checking ESP32 connection...', attempt + 1);
+            if (manualIP.trim()) {
+                const device = await ESP32Service.testESP32Connection(manualIP.trim());
+                if (device && !device.configured) {
+                    devices = [device];
                 }
             }
             
-            if (!espConnected) {
-                // El ESP32 no se conectó, eliminar la zona y mostrar error
-                await deleteZoneOnError(newZoneId);
+            // Si no hay IP manual o no se encontró, escanear la red
+            if (devices.length === 0) {
+                devices = await ESP32Service.scanForESP32Devices();
+                // Filtrar solo dispositivos sin configurar
+                devices = devices.filter(d => !d.configured);
+            }
+            
+            setDiscoveredDevices(devices);
+            
+            if (devices.length === 0) {
                 setConnectionStep('error');
-                setErrorMessage('El ESP32 no respondió. Verifica que esté encendido y que los datos de WiFi sean correctos.');
+                setErrorMessage('No se encontró ningún ESP32 disponible en la red. Asegúrate de que:\n\n• El ESP32 esté encendido\n• Esté conectado a la misma red WiFi\n• No esté vinculado a otra zona');
                 return;
             }
             
-            // Paso 3: Verificar lectura de sensores
-            setConnectionStep('testing');
-            Animated.timing(progressAnim, {
-                toValue: 1,
-                duration: 500,
-                useNativeDriver: false,
-            }).start();
+            setConnectionStatus(prev => ({ ...prev, espFound: true }));
             
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Si hay un solo dispositivo, emparejarlo automáticamente
+            // Si hay varios, el usuario debe seleccionar
+            const deviceToPair = devices.length === 1 ? devices[0] : null;
             
-            // Verificar que hay datos de sensores
-            const finalCheck = await fetch(`${API_CONFIG.BASE_URL}/zones/detail/${newZoneId}`);
-            if (finalCheck.ok) {
-                const finalData = await finalCheck.json();
-                if (finalData.sensors && (
-                    finalData.sensors.soilMoisture !== null ||
-                    finalData.sensors.temperature !== null ||
-                    finalData.sensors.tankLevel !== null
-                )) {
-                    setConnectionStatus(prev => ({ ...prev, sensorsReading: true }));
-                }
-            }
-            
-            // ¡Éxito!
-            setConnectionStep('success');
-            
-            // Si el tutorial está activo, avanzar al siguiente paso
-            if (isActive) {
-                nextStep();
+            if (deviceToPair) {
+                await pairDevice(deviceToPair, newZoneId);
+            } else {
+                // Mostrar lista de dispositivos para seleccionar
+                setSelectedDevice(null);
             }
             
         } catch (error) {
@@ -322,6 +268,88 @@ const int zoneId = ${createdZoneId};`;
             setErrorMessage(error instanceof Error ? error.message : 'Error al crear la zona. Intenta de nuevo.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const pairDevice = async (device: ESP32DeviceInfo, zoneId: number) => {
+        try {
+            setConnectionStep('pairing');
+            setSelectedDevice(device);
+            Animated.timing(progressAnim, {
+                toValue: 0.75,
+                duration: 500,
+                useNativeDriver: false,
+            }).start();
+            
+            // Emparejar el ESP32 con la zona
+            const pairResult = await ESP32Service.pairESP32(device.ip, zoneId);
+            
+            if (!pairResult.success) {
+                throw new Error(pairResult.message || 'Error al emparejar el ESP32');
+            }
+            
+            setConnectionStatus(prev => ({ ...prev, espPaired: true }));
+            
+            // Paso 3: Esperar a que el ESP32 envíe datos
+            setConnectionStep('testing');
+            Animated.timing(progressAnim, {
+                toValue: 1,
+                duration: 500,
+                useNativeDriver: false,
+            }).start();
+            
+            // Esperar unos segundos para que el ESP32 se reinicie y envíe datos
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Verificar que el ESP32 está enviando datos
+            const maxAttempts = 6;
+            let sensorsWorking = false;
+            
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                try {
+                    const zoneCheck = await fetch(`${API_CONFIG.BASE_URL}/zones/detail/${zoneId}`);
+                    if (zoneCheck.ok) {
+                        const zoneData = await zoneCheck.json();
+                        
+                        if (zoneData.status?.connection === 'ONLINE' || 
+                            zoneData.status?.hasSensorData ||
+                            (zoneData.sensors && (
+                                zoneData.sensors.soilMoisture !== null ||
+                                zoneData.sensors.temperature !== null
+                            ))) {
+                            sensorsWorking = true;
+                            setConnectionStatus(prev => ({ ...prev, sensorsReading: true }));
+                            break;
+                        }
+                    }
+                } catch (error) {
+                    console.log('Verificando sensores...', attempt + 1);
+                }
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+            
+            // ¡Éxito! (aunque los sensores no respondan inmediatamente)
+            setConnectionStep('success');
+            
+            if (isActive) {
+                nextStep();
+            }
+            
+        } catch (error) {
+            console.error('Pair device error:', error);
+            setConnectionStep('error');
+            setErrorMessage(error instanceof Error ? error.message : 'Error al emparejar el dispositivo');
+            
+            // Eliminar la zona si falló el emparejamiento
+            if (createdZoneId) {
+                await deleteZoneOnError(createdZoneId);
+            }
+        }
+    };
+
+    const handleSelectDevice = (device: ESP32DeviceInfo) => {
+        if (createdZoneId) {
+            pairDevice(device, createdZoneId);
         }
     };
 
@@ -342,14 +370,17 @@ const int zoneId = ${createdZoneId};`;
         setTimeout(() => handleCreateZone(), 300);
     };
 
-    const getStepStatus = (step: 'zone' | 'esp' | 'sensors') => {
+    const getStepStatus = (step: 'zone' | 'esp' | 'pair' | 'sensors') => {
         switch (step) {
             case 'zone':
                 return connectionStatus.zoneCreated ? 'done' : 
                        connectionStep === 'creating' ? 'active' : 'pending';
             case 'esp':
-                return connectionStatus.espConnected ? 'done' : 
-                       connectionStep === 'connecting' ? 'active' : 'pending';
+                return connectionStatus.espFound ? 'done' : 
+                       connectionStep === 'scanning' ? 'active' : 'pending';
+            case 'pair':
+                return connectionStatus.espPaired ? 'done' : 
+                       connectionStep === 'pairing' ? 'active' : 'pending';
             case 'sensors':
                 return connectionStatus.sensorsReading ? 'done' : 
                        connectionStep === 'testing' ? 'active' : 'pending';
@@ -440,44 +471,33 @@ const int zoneId = ${createdZoneId};`;
                 <View style={styles.infoCard}>
                     <Ionicons name="information-circle-outline" size={24} color={Colors.blue[500]} />
                     <Text style={styles.infoText}>
-                        La zona se creará con una configuración predeterminada que podrás ajustar más tarde.
+                        El ESP32 debe estar encendido y conectado a la misma red WiFi que tu teléfono.
                     </Text>
                 </View>
 
                 <View style={styles.formSection}>
-                    <Text style={styles.label}>Configura tu ESP32</Text>
+                    <Text style={styles.label}>IP del ESP32 (opcional)</Text>
                     <View style={styles.espCard}>
                         <Text style={styles.espDescription}>
-                            Estos datos se usarán para conectar el ESP32 inmediatamente después de crear la zona.
+                            Si conoces la IP del ESP32, ingrésala aquí. Si no, se buscará automáticamente en la red.
                         </Text>
 
                         <View style={styles.inputContainer}>
-                            <Ionicons name="wifi" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
+                            <Ionicons name="globe-outline" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
                             <TextInput
                                 style={styles.input}
-                                placeholder="SSID de tu red"
-                                value={espConfig.ssid}
-                                onChangeText={(text) => setEspConfig(prev => ({ ...prev, ssid: text }))}
+                                placeholder="Ej: 192.168.1.100"
+                                value={manualIP}
+                                onChangeText={setManualIP}
                                 placeholderTextColor={Colors.gray[400]}
-                            />
-                        </View>
-
-                        <View style={[styles.inputContainer, { marginTop: Spacing.sm }]}>
-                            <Ionicons name="lock-closed" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Contraseña WiFi"
-                                secureTextEntry
-                                value={espConfig.password}
-                                onChangeText={(text) => setEspConfig(prev => ({ ...prev, password: text }))}
-                                placeholderTextColor={Colors.gray[400]}
+                                keyboardType="numeric"
                             />
                         </View>
                     </View>
                 </View>
 
                 <Button
-                    title="Crear zona y conectar ESP32"
+                    title="Crear zona y buscar ESP32"
                     onPress={handleCreateZone}
                     loading={loading}
                     style={styles.submitButton}
@@ -551,60 +571,77 @@ const int zoneId = ${createdZoneId};`;
                                     <View style={styles.stepConnector} />
                                     <ConnectionStepItem 
                                         number={2}
-                                        title="Esperando ESP32"
-                                        subtitle="Configura y enciende tu dispositivo"
+                                        title="Buscando ESP32"
+                                        subtitle="Escaneando la red local"
                                         status={getStepStatus('esp')}
                                         pulseAnim={pulseAnim}
                                     />
                                     <View style={styles.stepConnector} />
                                     <ConnectionStepItem 
                                         number={3}
-                                        title="Leyendo sensores"
-                                        subtitle="Verificando datos del sistema"
+                                        title="Emparejando"
+                                        subtitle="Vinculando dispositivo"
+                                        status={getStepStatus('pair')}
+                                        pulseAnim={pulseAnim}
+                                    />
+                                    <View style={styles.stepConnector} />
+                                    <ConnectionStepItem 
+                                        number={4}
+                                        title="Verificando"
+                                        subtitle="Probando sensores"
                                         status={getStepStatus('sensors')}
                                         pulseAnim={pulseAnim}
                                     />
                                 </View>
 
-                                {/* Instrucciones del ESP32 */}
-                                {connectionStep === 'connecting' && (
-                                    <View style={styles.espInstructions}>
-                                        <Text style={styles.espInstructionsTitle}>Configura tu ESP32:</Text>
-                                        
-                                        <View style={styles.configDataSection}>
-                                            <View style={styles.configItem}>
-                                                <View style={[styles.configItemIcon, { backgroundColor: Colors.blue[50] }]}>
-                                                    <Ionicons name="wifi" size={16} color={Colors.blue[500]} />
-                                                </View>
-                                                <View style={styles.configItemContent}>
-                                                    <Text style={styles.configItemLabel}>WiFi</Text>
-                                                    <Text style={styles.configItemValue}>{espConfig.ssid}</Text>
-                                                </View>
+                                {/* Lista de dispositivos encontrados (si hay varios) */}
+                                {connectionStep === 'scanning' && discoveredDevices.length > 1 && (
+                                    <View style={styles.deviceListContainer}>
+                                        <Text style={styles.deviceListTitle}>Selecciona un ESP32:</Text>
+                                        <FlatList
+                                            data={discoveredDevices}
+                                            keyExtractor={(item) => item.mac}
+                                            renderItem={({ item }) => (
+                                                <TouchableOpacity
+                                                    style={styles.deviceItem}
+                                                    onPress={() => handleSelectDevice(item)}
+                                                >
+                                                    <View style={styles.deviceItemIcon}>
+                                                        <Ionicons name="hardware-chip" size={24} color={Colors.emerald[600]} />
+                                                    </View>
+                                                    <View style={styles.deviceItemContent}>
+                                                        <Text style={styles.deviceItemName}>{item.device}</Text>
+                                                        <Text style={styles.deviceItemIP}>IP: {item.ip}</Text>
+                                                        <Text style={styles.deviceItemMAC}>MAC: {item.mac}</Text>
+                                                    </View>
+                                                    <Ionicons name="chevron-forward" size={20} color={Colors.gray[400]} />
+                                                </TouchableOpacity>
+                                            )}
+                                        />
+                                    </View>
+                                )}
+
+                                {/* Información del dispositivo seleccionado */}
+                                {(connectionStep === 'pairing' || connectionStep === 'testing') && selectedDevice && (
+                                    <View style={styles.selectedDeviceInfo}>
+                                        <View style={styles.configItem}>
+                                            <View style={[styles.configItemIcon, { backgroundColor: Colors.emerald[50] }]}>
+                                                <Ionicons name="hardware-chip" size={16} color={Colors.emerald[600]} />
                                             </View>
-                                            <View style={styles.configItem}>
-                                                <View style={[styles.configItemIcon, { backgroundColor: Colors.emerald[50] }]}>
-                                                    <Ionicons name="location" size={16} color={Colors.emerald[600]} />
-                                                </View>
-                                                <View style={styles.configItemContent}>
-                                                    <Text style={styles.configItemLabel}>Zone ID</Text>
-                                                    <Text style={styles.configItemValue}>{createdZoneId || '-'}</Text>
-                                                </View>
+                                            <View style={styles.configItemContent}>
+                                                <Text style={styles.configItemLabel}>Dispositivo</Text>
+                                                <Text style={styles.configItemValue}>{selectedDevice.ip}</Text>
                                             </View>
                                         </View>
-                                        
-                                        <TouchableOpacity 
-                                            style={[styles.copyButton, configCopied && styles.copyButtonSuccess]}
-                                            onPress={copyConfigToClipboard}
-                                        >
-                                            <Ionicons 
-                                                name={configCopied ? "checkmark" : "copy"} 
-                                                size={18} 
-                                                color={configCopied ? Colors.emerald[600] : Colors.gray[600]} 
-                                            />
-                                            <Text style={[styles.copyButtonText, configCopied && styles.copyButtonTextSuccess]}>
-                                                {configCopied ? '¡Código copiado!' : 'Copiar código Arduino'}
-                                            </Text>
-                                        </TouchableOpacity>
+                                        <View style={styles.configItem}>
+                                            <View style={[styles.configItemIcon, { backgroundColor: Colors.blue[50] }]}>
+                                                <Ionicons name="location" size={16} color={Colors.blue[500]} />
+                                            </View>
+                                            <View style={styles.configItemContent}>
+                                                <Text style={styles.configItemLabel}>Zone ID</Text>
+                                                <Text style={styles.configItemValue}>{createdZoneId || '-'}</Text>
+                                            </View>
+                                        </View>
                                     </View>
                                 )}
                             </View>
@@ -1143,5 +1180,60 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.base,
         fontWeight: '700',
         color: '#fff',
+    },
+    // Lista de dispositivos
+    deviceListContainer: {
+        marginTop: Spacing.lg,
+        backgroundColor: Colors.gray[50],
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+    },
+    deviceListTitle: {
+        fontSize: FontSizes.sm,
+        fontWeight: '600',
+        color: Colors.gray[700],
+        marginBottom: Spacing.sm,
+    },
+    deviceItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+        marginBottom: Spacing.sm,
+        borderWidth: 1,
+        borderColor: Colors.gray[200],
+    },
+    deviceItemIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: Colors.emerald[50],
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+    },
+    deviceItemContent: {
+        flex: 1,
+    },
+    deviceItemName: {
+        fontSize: FontSizes.base,
+        fontWeight: '600',
+        color: Colors.gray[900],
+    },
+    deviceItemIP: {
+        fontSize: FontSizes.sm,
+        color: Colors.gray[600],
+    },
+    deviceItemMAC: {
+        fontSize: FontSizes.xs,
+        color: Colors.gray[400],
+    },
+    selectedDeviceInfo: {
+        marginTop: Spacing.lg,
+        backgroundColor: Colors.gray[50],
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        gap: Spacing.sm,
     },
 });

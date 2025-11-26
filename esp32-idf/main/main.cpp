@@ -12,8 +12,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
@@ -25,21 +27,25 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "esp_netif.h"
 #include "esp_http_client.h"
+#include "esp_http_server.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 
 static const char *TAG = "AGROMIND";
 
 // ==================== CONFIGURACIÓN WIFI ====================
-#define WIFI_SSID "Medina 2.0"
-#define WIFI_PASS "Amorcito"
-#define WIFI_MAXIMUM_RETRY 5
+#define WIFI_SSID "Turip"
+#define WIFI_PASS "00000000"
+#define WIFI_MAXIMUM_RETRY 10
+
+// Puerto del servidor local para configuración desde la app
+#define LOCAL_SERVER_PORT 80
 
 // ==================== CONFIGURACIÓN API ====================
 #define SERVER_URL "https://agromind-5hb1.onrender.com/api/iot/sensor-data"
-#define ZONE_ID 1
 
 // ==================== PINES ====================
 #define RELAY_PIN GPIO_NUM_25
@@ -62,6 +68,12 @@ static const char *TAG = "AGROMIND";
 #define LDR_DARK_ADC 500.0f      // Valor ADC cuando está oscuro (ajusta según tu lectura)
 #define LDR_BRIGHT_ADC 3500.0f   // Valor ADC cuando tiene mucha luz (ajusta según tu lectura)
 
+// ==================== NVS KEYS ====================
+#define NVS_NAMESPACE "agromind"
+#define NVS_KEY_ZONE_ID "zone_id"
+#define NVS_KEY_WIFI_SSID "wifi_ssid"
+#define NVS_KEY_WIFI_PASS "wifi_pass"
+
 // ==================== VARIABLES GLOBALES ====================
 static adc_oneshot_unit_handle_t adc1_handle;
 static adc_cali_handle_t adc1_cali_handle = NULL;
@@ -77,6 +89,12 @@ static bool auto_watering_active = false;
 static TickType_t auto_watering_deadline = 0;
 static float last_soil_moisture = 0.0f;
 static float last_tank_level = 0.0f;
+
+// Configuración guardada en NVS
+static int32_t current_zone_id = 0;  // 0 = no configurado
+
+// Servidor HTTP local para configuración desde la app
+static httpd_handle_t local_server = NULL;
 
 static const float MOISTURE_HYSTERESIS = 5.0f;
 static const float MIN_TANK_PERCENTAGE = 5.0f;
@@ -516,9 +534,14 @@ static void send_sensor_data(void) {
         ESP_LOGW(TAG, "WiFi no conectado");
         return;
     }
+    
+    if (current_zone_id <= 0) {
+        // Sin zona, el servidor local ya está corriendo esperando configuración
+        return;
+    }
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "zoneId", ZONE_ID);
+    cJSON_AddNumberToObject(root, "zoneId", current_zone_id);
 
     refresh_dht_measurement();
     float temperature_c = last_temperature_c;
@@ -557,9 +580,24 @@ static void send_sensor_data(void) {
 
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
+        int status_code = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "HTTP Status = %d, content_length = %lld",
-                 esp_http_client_get_status_code(client),
+                 status_code,
                  esp_http_client_get_content_length(client));
+        
+        // Si la zona no existe (404), resetear configuración
+        if (status_code == 404) {
+            ESP_LOGW(TAG, "⚠️ Zona %ld no existe en el servidor", current_zone_id);
+            ESP_LOGI(TAG, "🔄 Reseteando configuración, esperando nueva zona desde la app...");
+            // Borrar zone_id de NVS
+            nvs_handle_t nvs_h;
+            if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_h) == ESP_OK) {
+                nvs_erase_key(nvs_h, NVS_KEY_ZONE_ID);
+                nvs_commit(nvs_h);
+                nvs_close(nvs_h);
+            }
+            current_zone_id = 0;
+        }
     } else {
         ESP_LOGE(TAG, "HTTP POST falló: %s", esp_err_to_name(err));
     }
@@ -567,6 +605,239 @@ static void send_sensor_data(void) {
     esp_http_client_cleanup(client);
     cJSON_Delete(root);
     free(payload);
+}
+
+// ==================== FUNCIONES NVS ====================
+
+static void load_config_from_nvs(void) {
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+    
+    if (err == ESP_OK) {
+        // Cargar zone_id
+        int32_t zone_id = 0;
+        if (nvs_get_i32(nvs, NVS_KEY_ZONE_ID, &zone_id) == ESP_OK) {
+            current_zone_id = zone_id;
+            ESP_LOGI(TAG, "📦 NVS: zone_id = %ld", current_zone_id);
+        } else {
+            ESP_LOGI(TAG, "📦 NVS: Sin zone_id guardado");
+            current_zone_id = 0;
+        }
+        
+        nvs_close(nvs);
+    } else {
+        ESP_LOGW(TAG, "📦 NVS: No hay configuración guardada");
+    }
+}
+
+static void save_zone_id_to_nvs(int32_t zone_id) {
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    
+    if (err == ESP_OK) {
+        nvs_set_i32(nvs, NVS_KEY_ZONE_ID, zone_id);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+        ESP_LOGI(TAG, "💾 Zone ID %ld guardado en NVS", zone_id);
+    } else {
+        ESP_LOGE(TAG, "❌ Error abriendo NVS: %s", esp_err_to_name(err));
+    }
+}
+
+static void clear_zone_id_from_nvs(void) {
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    
+    if (err == ESP_OK) {
+        nvs_erase_key(nvs, NVS_KEY_ZONE_ID);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+        current_zone_id = 0;
+        ESP_LOGI(TAG, "🗑️ Zone ID borrado de NVS");
+    }
+}
+
+// ==================== SERVIDOR HTTP LOCAL (para la app) ====================
+
+// GET /info - La app descubre el ESP32 y obtiene su estado
+static esp_err_t info_handler(httpd_req_t *req) {
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddStringToObject(json, "device", "AgroMind-ESP32");
+    cJSON_AddStringToObject(json, "mac", mac_str);
+    cJSON_AddNumberToObject(json, "zoneId", current_zone_id);
+    cJSON_AddBoolToObject(json, "configured", current_zone_id > 0);
+    cJSON_AddBoolToObject(json, "pumpState", pump_state);
+    
+    // Agregar últimas lecturas de sensores
+    cJSON *sensors = cJSON_CreateObject();
+    cJSON_AddNumberToObject(sensors, "temperature", last_temperature_c);
+    cJSON_AddNumberToObject(sensors, "humidity", last_ambient_humidity);
+    cJSON_AddNumberToObject(sensors, "soilMoisture", last_soil_moisture);
+    cJSON_AddNumberToObject(sensors, "tankLevel", last_tank_level);
+    cJSON_AddItemToObject(json, "sensors", sensors);
+    
+    char *response = cJSON_PrintUnformatted(json);
+    
+    // Agregar headers CORS para que la app pueda acceder
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, response);
+    
+    free(response);
+    cJSON_Delete(json);
+    return ESP_OK;
+}
+
+// POST /pair - La app envía el Zone ID para vincular
+static esp_err_t pair_handler(httpd_req_t *req) {
+    char buf[128];
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    
+    if (ret <= 0) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    buf[ret] = '\0';
+    
+    ESP_LOGI(TAG, "📱 Solicitud de emparejamiento: %s", buf);
+    
+    cJSON *json = cJSON_Parse(buf);
+    if (json == NULL) {
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON inválido");
+        return ESP_FAIL;
+    }
+    
+    cJSON *zone_id_item = cJSON_GetObjectItem(json, "zoneId");
+    
+    if (zone_id_item && cJSON_IsNumber(zone_id_item)) {
+        int32_t new_zone_id = (int32_t)cJSON_GetNumberValue(zone_id_item);
+        
+        if (new_zone_id > 0) {
+            current_zone_id = new_zone_id;
+            save_zone_id_to_nvs(new_zone_id);
+            
+            ESP_LOGI(TAG, "✅ Emparejado con zona %ld", current_zone_id);
+            
+            cJSON *response = cJSON_CreateObject();
+            cJSON_AddBoolToObject(response, "success", true);
+            cJSON_AddNumberToObject(response, "zoneId", current_zone_id);
+            cJSON_AddStringToObject(response, "message", "ESP32 vinculado correctamente");
+            
+            char *resp_str = cJSON_PrintUnformatted(response);
+            httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_sendstr(req, resp_str);
+            
+            free(resp_str);
+            cJSON_Delete(response);
+        } else {
+            httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Zone ID inválido");
+        }
+    } else {
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Falta zoneId");
+    }
+    
+    cJSON_Delete(json);
+    return ESP_OK;
+}
+
+// POST /unpair - Desvincular el ESP32 de la zona
+static esp_err_t unpair_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "🔓 Solicitud de desvinculación");
+    
+    clear_zone_id_from_nvs();
+    
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddStringToObject(response, "message", "ESP32 desvinculado");
+    
+    char *resp_str = cJSON_PrintUnformatted(response);
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp_str);
+    
+    free(resp_str);
+    cJSON_Delete(response);
+    return ESP_OK;
+}
+
+// Handler para CORS preflight
+static esp_err_t cors_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+static void start_local_server(void) {
+    if (local_server != NULL) {
+        return;  // Ya está corriendo
+    }
+    
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 8192;
+    config.server_port = LOCAL_SERVER_PORT;
+    
+    if (httpd_start(&local_server, &config) == ESP_OK) {
+        // GET /info
+        httpd_uri_t uri_info = {
+            .uri = "/info",
+            .method = HTTP_GET,
+            .handler = info_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(local_server, &uri_info);
+        
+        // POST /pair
+        httpd_uri_t uri_pair = {
+            .uri = "/pair",
+            .method = HTTP_POST,
+            .handler = pair_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(local_server, &uri_pair);
+        
+        // POST /unpair
+        httpd_uri_t uri_unpair = {
+            .uri = "/unpair",
+            .method = HTTP_POST,
+            .handler = unpair_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(local_server, &uri_unpair);
+        
+        // OPTIONS para CORS
+        httpd_uri_t uri_cors_pair = {
+            .uri = "/pair",
+            .method = HTTP_OPTIONS,
+            .handler = cors_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(local_server, &uri_cors_pair);
+        
+        httpd_uri_t uri_cors_unpair = {
+            .uri = "/unpair",
+            .method = HTTP_OPTIONS,
+            .handler = cors_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(local_server, &uri_cors_unpair);
+        
+        ESP_LOGI(TAG, "🌐 Servidor local iniciado en puerto %d", LOCAL_SERVER_PORT);
+    } else {
+        ESP_LOGE(TAG, "❌ Error iniciando servidor local");
+    }
 }
 
 // ==================== CONFIGURACIÓN WIFI ====================
@@ -581,14 +852,23 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             retry_num++;
             ESP_LOGW(TAG, "Reintentando conexión WiFi (%d)", retry_num);
         } else {
-            ESP_LOGE(TAG, "No se pudo conectar a WiFi");
+            ESP_LOGE(TAG, "No se pudo conectar a WiFi después de %d intentos", WIFI_MAXIMUM_RETRY);
+            retry_num = 0;  // Reset para intentar de nuevo
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            esp_wifi_connect();
         }
         wifi_connected = false;
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "IP obtenida: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "  ✅ CONECTADO A WIFI");
+        ESP_LOGI(TAG, "  IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "========================================");
         retry_num = 0;
         wifi_connected = true;
+        
+        // Iniciar servidor local cuando tengamos IP
+        start_local_server();
     }
 }
 
@@ -618,21 +898,29 @@ static void wifi_init(void) {
     strncpy((char *)wifi_config.sta.password, WIFI_PASS, sizeof(wifi_config.sta.password));
     wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
     wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Conectando a SSID: %s", WIFI_SSID);
+    ESP_LOGI(TAG, "Conectando a WiFi: %s", WIFI_SSID);
 }
 
 // ==================== TAREA PRINCIPAL ====================
 
 static void sensor_task(void *pvParameters) {
-    const TickType_t delay_ticks = pdMS_TO_TICKS(1000);
+    const TickType_t delay_ticks = pdMS_TO_TICKS(5000);  // 5 segundos entre envíos
+    
     while (true) {
-        send_sensor_data();
+        // Solo enviar datos si hay zona configurada
+        if (current_zone_id > 0) {
+            send_sensor_data();
+        } else {
+            ESP_LOGI(TAG, "⏳ Esperando configuración desde la app...");
+            ESP_LOGI(TAG, "   La app puede conectarse a http://<mi-ip>/info");
+        }
+        
         vTaskDelay(delay_ticks);
     }
 }
@@ -651,6 +939,14 @@ extern "C" void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    
+    // Cargar configuración guardada
+    load_config_from_nvs();
+    
+    ESP_LOGI(TAG, "📋 Configuración:");
+    ESP_LOGI(TAG, "   Zone ID: %ld %s", current_zone_id, 
+             current_zone_id > 0 ? "(configurado)" : "(pendiente)");
+    ESP_LOGI(TAG, "   WiFi: %s", WIFI_SSID);
 
     // IMPORTANTE: Poner el GPIO del relé en HIGH ANTES de configurarlo
     // para evitar que el relé se active durante el boot (relé active-low)

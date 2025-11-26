@@ -119,6 +119,17 @@ router.put('/:id', async (req: Request, res: Response) => {
           { moistureThreshold: newConfig.moistureThreshold }
         );
       }
+
+      // Cambio de tiempo de riego
+      if (oldConfig?.wateringDuration !== newConfig.wateringDuration) {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'CONFIG_CAMBIO',
+          `Tiempo de riego cambiado a ${newConfig.wateringDuration} segundos en ${zone.name}`,
+          { wateringDuration: newConfig.wateringDuration }
+        );
+      }
     }
 
     res.json(zone);

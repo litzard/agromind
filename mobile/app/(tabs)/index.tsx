@@ -465,17 +465,13 @@ export default function DashboardScreen() {
                     <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>
                         {hasData ? 'ACTUAL' : 'SIN DATOS'}
                     </Text>
-                    <View style={[
-                        styles.statusBadge,
-                        { backgroundColor: !hasData ? Colors.gray[100] : isLow ? Colors.red[50] : Colors.emerald[50] }
-                    ]}>
                         <Text style={[
                             styles.statusText,
                             { color: !hasData ? Colors.gray[500] : isLow ? Colors.red[500] : Colors.emerald[500] }
                         ]}>
                             {hasData ? (isLow ? 'CRÍTICO' : 'ÓPTIMO') : 'Esperando...'}
                         </Text>
-                    </View>
+                    
                 </View>
             </View>
         );

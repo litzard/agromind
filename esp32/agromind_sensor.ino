@@ -44,6 +44,16 @@ unsigned long lastSendTime = 0;
 const unsigned long sendInterval = 10000;  // Enviar datos cada 10 segundos
 bool pumpState = false;
 
+// Variables para modo automático (recibidas del servidor)
+bool autoModeEnabled = false;
+int moistureThreshold = 30;      // Umbral de humedad (%)
+int wateringDuration = 10;       // Duración del riego (segundos)
+bool tankLocked = false;         // Tanque vacío - bloquear bomba
+
+// Variables para control de riego automático
+unsigned long pumpStartTime = 0;
+bool autoWateringActive = false;
+
 // ==================== FUNCIONES DE SENSORES ====================
 
 // Leer DHT11 (Temperatura)
@@ -135,10 +145,58 @@ float readLightLevel() {
 // ==================== CONTROL DE BOMBA ====================
 
 void setPumpState(bool state) {
+  // No encender si el tanque está bloqueado
+  if (state && tankLocked) {
+    Serial.println("⚠️ Bomba bloqueada: tanque vacío");
+    return;
+  }
+  
   pumpState = state;
   digitalWrite(RELAY_PIN, state ? HIGH : LOW);
   Serial.print("Bomba: ");
   Serial.println(state ? "ENCENDIDA" : "APAGADA");
+  
+  // Registrar tiempo de inicio para riego automático
+  if (state && autoWateringActive) {
+    pumpStartTime = millis();
+  }
+}
+
+// Evaluar si debe activarse el riego automático
+void evaluateAutoWatering(float soilMoisture) {
+  if (!autoModeEnabled || tankLocked) {
+    return;
+  }
+  
+  // Si la humedad está por debajo del umbral y la bomba está apagada
+  if (soilMoisture < moistureThreshold && !pumpState && !autoWateringActive) {
+    Serial.println("\n🌱 === RIEGO AUTOMÁTICO ACTIVADO ===");
+    Serial.print("Humedad actual: ");
+    Serial.print(soilMoisture);
+    Serial.print("% < Umbral: ");
+    Serial.print(moistureThreshold);
+    Serial.println("%");
+    
+    autoWateringActive = true;
+    setPumpState(true);
+  }
+}
+
+// Verificar si debe apagarse el riego automático (por tiempo)
+void checkAutoWateringTimeout() {
+  if (autoWateringActive && pumpState) {
+    unsigned long elapsedTime = (millis() - pumpStartTime) / 1000;
+    
+    if (elapsedTime >= (unsigned long)wateringDuration) {
+      Serial.println("\n⏱️ === RIEGO AUTOMÁTICO FINALIZADO ===");
+      Serial.print("Duración: ");
+      Serial.print(elapsedTime);
+      Serial.println(" segundos");
+      
+      autoWateringActive = false;
+      setPumpState(false);
+    }
+  }
 }
 
 // ==================== COMUNICACIÓN API ====================
@@ -150,6 +208,12 @@ void sendSensorData() {
     return;
   }
 
+  // Leer sensores
+  float temperature = readTemperature();
+  float soilMoisture = readSoilMoisture();
+  float waterLevel = readWaterLevel();
+  float lightLevel = readLightLevel();
+
   HTTPClient http;
   http.begin(serverUrl);
   http.addHeader("Content-Type", "application/json");
@@ -159,10 +223,10 @@ void sendSensorData() {
   doc["zoneId"] = zoneId;
   
   JsonObject sensors = doc.createNestedObject("sensors");
-  sensors["temperature"] = readTemperature();
-  sensors["soilMoisture"] = readSoilMoisture();
-  sensors["waterLevel"] = readWaterLevel();
-  sensors["lightLevel"] = readLightLevel();
+  sensors["temperature"] = temperature;
+  sensors["soilMoisture"] = soilMoisture;
+  sensors["waterLevel"] = waterLevel;
+  sensors["lightLevel"] = lightLevel;
   sensors["pumpStatus"] = pumpState;
   
   String jsonData;
@@ -179,15 +243,81 @@ void sendSensorData() {
     Serial.println(httpResponseCode);
     Serial.println(response);
     
-    // Procesar respuesta del servidor (control de bomba)
+    // Procesar respuesta del servidor
     if (httpResponseCode == 200) {
-      StaticJsonDocument<256> responseDoc;
+      StaticJsonDocument<512> responseDoc;
       DeserializationError error = deserializeJson(responseDoc, response);
       
-      if (!error && responseDoc.containsKey("pumpCommand")) {
-        bool shouldPumpBeOn = responseDoc["pumpCommand"];
-        if (shouldPumpBeOn != pumpState) {
-          setPumpState(shouldPumpBeOn);
+      if (!error) {
+        // Procesar comandos del servidor
+        if (responseDoc.containsKey("commands")) {
+          JsonObject commands = responseDoc["commands"];
+          
+          // Actualizar configuración de modo automático
+          if (commands.containsKey("autoMode")) {
+            bool newAutoMode = commands["autoMode"];
+            if (newAutoMode != autoModeEnabled) {
+              autoModeEnabled = newAutoMode;
+              Serial.print("📋 Modo automático: ");
+              Serial.println(autoModeEnabled ? "ACTIVADO" : "DESACTIVADO");
+            }
+          }
+          
+          // Actualizar umbral de humedad
+          if (commands.containsKey("moistureThreshold")) {
+            int newThreshold = commands["moistureThreshold"];
+            if (newThreshold != moistureThreshold) {
+              moistureThreshold = newThreshold;
+              Serial.print("📋 Umbral de humedad: ");
+              Serial.print(moistureThreshold);
+              Serial.println("%");
+            }
+          }
+          
+          // Actualizar duración del riego
+          if (commands.containsKey("wateringDuration")) {
+            int newDuration = commands["wateringDuration"];
+            if (newDuration != wateringDuration) {
+              wateringDuration = newDuration;
+              Serial.print("📋 Duración de riego: ");
+              Serial.print(wateringDuration);
+              Serial.println(" segundos");
+            }
+          }
+          
+          // Verificar bloqueo de tanque
+          if (commands.containsKey("tankLocked")) {
+            tankLocked = commands["tankLocked"];
+            if (tankLocked && pumpState) {
+              Serial.println("⚠️ Tanque vacío - apagando bomba");
+              autoWateringActive = false;
+              setPumpState(false);
+            }
+          }
+          
+          // Procesar comando manual de bomba (tiene prioridad sobre automático)
+          if (commands.containsKey("pumpState") && !commands["pumpState"].isNull()) {
+            bool manualPumpCommand = commands["pumpState"];
+            Serial.print("🔧 Comando manual de bomba: ");
+            Serial.println(manualPumpCommand ? "ENCENDER" : "APAGAR");
+            
+            // Cancelar riego automático si hay comando manual
+            if (autoWateringActive && !manualPumpCommand) {
+              autoWateringActive = false;
+            }
+            
+            if (manualPumpCommand != pumpState) {
+              setPumpState(manualPumpCommand);
+            }
+          }
+        }
+        
+        // Compatibilidad con formato antiguo (pumpCommand)
+        if (responseDoc.containsKey("pumpCommand")) {
+          bool shouldPumpBeOn = responseDoc["pumpCommand"];
+          if (shouldPumpBeOn != pumpState) {
+            setPumpState(shouldPumpBeOn);
+          }
         }
       }
     }
@@ -197,6 +327,9 @@ void sendSensorData() {
   }
   
   http.end();
+  
+  // Evaluar riego automático después de enviar datos
+  evaluateAutoWatering(soilMoisture);
 }
 
 // ==================== CONFIGURACIÓN WIFI ====================
@@ -281,6 +414,9 @@ void loop() {
     sendSensorData();
     lastSendTime = currentTime;
   }
+  
+  // Verificar timeout de riego automático (cada 100ms)
+  checkAutoWateringTimeout();
   
   // Verificar conexión WiFi cada 30 segundos
   static unsigned long lastWiFiCheck = 0;

@@ -1,13 +1,22 @@
 import { API_CONFIG } from '../constants/api';
+import { ZoneConfig, ZoneSensors, ZoneStatus } from '../types';
 
 const getZoneDetailUrl = (zoneId: number) => `${API_CONFIG.BASE_URL}/zones/detail/${zoneId}`;
 
 export interface ESP32SensorData {
-    temperature: number;
-    soilMoisture: number;
-    waterLevel: number;
-    lightLevel: number;
-    pumpStatus: boolean;
+    temperature?: number | null;
+    soilMoisture?: number | null;
+    waterLevel?: number | null;
+    lightLevel?: number | null;
+    pumpStatus?: boolean;
+}
+
+export interface ZoneRealtimePayload {
+    id: number;
+    sensors?: ZoneSensors | null;
+    status?: ZoneStatus | null;
+    config?: ZoneConfig | null;
+    [key: string]: any;
 }
 
 export interface ESP32ConnectionStatus {
@@ -18,21 +27,24 @@ export interface ESP32ConnectionStatus {
 
 class ESP32Service {
     private pollingInterval: NodeJS.Timeout | null = null;
-    private subscribers: Map<number, (data: ESP32SensorData) => void> = new Map();
+    private subscribers: Map<number, (data: ZoneRealtimePayload) => void> = new Map();
 
     /**
      * Inicia el polling de datos para una zona específica
      */
-    startPolling(zoneId: number, callback: (data: ESP32SensorData) => void, intervalMs: number = 5000) {
-        // Guardar callback
+    startPolling(zoneId: number, callback: (data: ZoneRealtimePayload) => void, intervalMs: number = 5000) {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+        }
+
+        this.subscribers.clear();
         this.subscribers.set(zoneId, callback);
 
-        // Hacer primera lectura inmediata
-        this.fetchSensorData(zoneId);
+        this.fetchZoneSnapshot(zoneId);
 
-        // Iniciar polling
         this.pollingInterval = setInterval(() => {
-            this.fetchSensorData(zoneId);
+            this.fetchZoneSnapshot(zoneId);
         }, intervalMs);
 
         console.log(`📡 Polling iniciado para zona ${zoneId} cada ${intervalMs}ms`);
@@ -53,7 +65,7 @@ class ESP32Service {
     /**
      * Obtiene datos de sensores del servidor
      */
-    private async fetchSensorData(zoneId: number) {
+    private async fetchZoneSnapshot(zoneId: number) {
         try {
             const response = await fetch(getZoneDetailUrl(zoneId));
             
@@ -64,11 +76,9 @@ class ESP32Service {
 
             const data = await response.json();
             
-            if (data.sensors) {
-                const callback = this.subscribers.get(zoneId);
-                if (callback) {
-                    callback(data.sensors);
-                }
+            const callback = this.subscribers.get(zoneId);
+            if (callback) {
+                callback({ id: zoneId, ...data });
             }
         } catch (error) {
             console.error(`❌ Error fetching sensor data for zone ${zoneId}:`, error);
@@ -115,7 +125,7 @@ class ESP32Service {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ state })
+                body: JSON.stringify({ action: state ? 'ON' : 'OFF' })
             });
 
             if (!response.ok) {

@@ -22,7 +22,7 @@ import { Card } from '../../components/Card';
 import { Header } from '../../components/Header';
 import { TutorialOverlay } from '../../components/TutorialOverlay';
 import { WelcomeModal } from '../../components/WelcomeModal';
-import { Zone } from '../../types';
+import { Zone, ZoneConfig, ZoneSensors, ZoneStatus } from '../../types';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../styles/theme';
 import { API_CONFIG } from '../../constants/api';
 import { getLocalWeather, getUserLocation } from '../../services/weatherService';
@@ -30,6 +30,63 @@ import esp32Service from '../../services/esp32Service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
+
+const DEFAULT_SENSORS: ZoneSensors = {
+    soilMoisture: null,
+    temperature: null,
+    humidity: null,
+    lightLevel: null,
+    tankLevel: null,
+    waterLevel: null,
+};
+
+const DEFAULT_STATUS: ZoneStatus = {
+    pump: 'OFF',
+    lastWatered: null,
+    connection: 'UNKNOWN',
+    nextScheduledWatering: null,
+    lastUpdate: null,
+    hasSensorData: false,
+};
+
+const DEFAULT_CONFIG: ZoneConfig = {
+    autoMode: false,
+    moistureThreshold: 30,
+    wateringDuration: 10,
+    useWeatherApi: false,
+    respectRainForecast: false,
+};
+
+const mergeZoneSensors = (current: ZoneSensors | null, incoming?: ZoneSensors | null): ZoneSensors => {
+    const merged: ZoneSensors = {
+        ...DEFAULT_SENSORS,
+        ...(current || {}),
+        ...(incoming || {}),
+    };
+
+    const tankIsNumber = typeof merged.tankLevel === 'number';
+    const waterIsNumber = typeof merged.waterLevel === 'number';
+
+    if (!tankIsNumber && waterIsNumber) {
+        merged.tankLevel = merged.waterLevel;
+    } else if (!waterIsNumber && tankIsNumber) {
+        merged.waterLevel = merged.tankLevel;
+    }
+
+    return merged;
+};
+
+const mergeZoneStatus = (current?: ZoneStatus | null, incoming?: ZoneStatus | null): ZoneStatus => ({
+    ...DEFAULT_STATUS,
+    ...(current || {}),
+    ...(incoming || {}),
+});
+
+const mergeZoneConfig = (current?: ZoneConfig | null, incoming?: ZoneConfig | null): ZoneConfig => ({
+    ...DEFAULT_CONFIG,
+    ...(current || {}),
+    ...(incoming || {}),
+});
 
 export default function DashboardScreen() {
     const { user } = useAuth();
@@ -42,6 +99,7 @@ export default function DashboardScreen() {
     const [showWelcomeModal, setShowWelcomeModal] = useState(false);
     const [weather, setWeather] = useState<any>(null);
     const [weatherLoading, setWeatherLoading] = useState(false);
+    const [manualWatering, setManualWatering] = useState(false);
     const fadeAnim = React.useRef(new Animated.Value(0)).current;
     const scaleAnim = React.useRef(new Animated.Value(1)).current;
     const weatherIconScale = React.useRef(new Animated.Value(1)).current;
@@ -55,11 +113,15 @@ export default function DashboardScreen() {
     const activeZone = zones.find(z => z.id.toString() === activeZoneId);
     const activeZoneConnection = activeZone ? (activeZone.status.connection || 'UNKNOWN').toUpperCase() : 'UNKNOWN';
     const isActiveZoneOnline = activeZoneConnection === 'ONLINE';
-    const activeZoneSensors = (activeZone?.sensors ?? {}) as Record<string, number | null | undefined>;
+    const activeZoneSensors = (activeZone?.sensors ?? {}) as ZoneSensors;
     const hasSensorData = Boolean(activeZone?.status?.hasSensorData || activeZone?.status?.lastUpdate);
     const soilMoistureValue = typeof activeZoneSensors.soilMoisture === 'number' ? activeZoneSensors.soilMoisture : null;
     const temperatureValue = typeof activeZoneSensors.temperature === 'number' ? activeZoneSensors.temperature : null;
-    const tankLevelValue = typeof activeZoneSensors.tankLevel === 'number' ? activeZoneSensors.tankLevel : null;
+    const tankLevelValue = typeof activeZoneSensors.tankLevel === 'number'
+        ? activeZoneSensors.tankLevel
+        : typeof activeZoneSensors.waterLevel === 'number'
+            ? activeZoneSensors.waterLevel
+            : null;
     const lightLevelValue = typeof activeZoneSensors.lightLevel === 'number' ? activeZoneSensors.lightLevel : null;
 
     useFocusEffect(
@@ -149,11 +211,16 @@ export default function DashboardScreen() {
 
         console.log(`📡 Iniciando polling para zona ${activeZone.id}`);
 
-        esp32Service.startPolling(activeZone.id, (sensorData) => {
-            // Actualizar zona con datos en tiempo real
+        esp32Service.startPolling(activeZone.id, (zoneSnapshot) => {
             setZones(prev => prev.map(z =>
-                z.id === activeZone.id
-                    ? { ...z, sensors: { ...(z.sensors || {}), ...sensorData } }
+                z.id === zoneSnapshot.id
+                    ? {
+                        ...z,
+                        ...(zoneSnapshot as Partial<Zone>),
+                        sensors: mergeZoneSensors(z.sensors, zoneSnapshot.sensors || null),
+                        status: mergeZoneStatus(z.status, zoneSnapshot.status || null),
+                        config: mergeZoneConfig(z.config, zoneSnapshot.config || null),
+                    }
                     : z
             ));
         }, 5000); // Polling cada 5 segundos
@@ -174,17 +241,14 @@ export default function DashboardScreen() {
 
             setWeatherLoading(true);
             try {
-                // Obtener ubicación real del usuario
-                let location;
                 try {
-                    location = await getUserLocation();
+                    const location = await getUserLocation();
+                    const weatherData = await getLocalWeather(location.lat, location.lon);
+                    setWeather(weatherData);
                 } catch (locError: any) {
-                    console.warn('No se pudo obtener ubicación, usando default (CDMX):', locError.message);
-                    location = { lat: 19.4326, lon: -99.1332 }; // Fallback a CDMX
+                    console.warn('No se pudo obtener ubicación/clima:', locError.message);
+                    setWeather(null);
                 }
-
-                const weatherData = await getLocalWeather(location.lat, location.lon);
-                setWeather(weatherData);
             } catch (error) {
                 console.error('Error loading weather:', error);
                 setWeather(null);
@@ -258,10 +322,9 @@ export default function DashboardScreen() {
     };
 
     const handleManualWater = async () => {
-        if (!activeZone) return;
+        if (!activeZone || manualWatering) return;
 
         const currentZoneId = activeZone.id;
-
         if (!hasSensorData) {
             Alert.alert('Esperando datos', 'Aún no recibimos lecturas del ESP32 de esta zona. Conéctalo y envía datos antes de activar el riego.');
             return;
@@ -294,50 +357,26 @@ export default function DashboardScreen() {
                 }),
             ]).start();
 
-            // Encender la bomba
-            const statusToSend = {
-                ...activeZone.status,
-                pump: 'ON'
-            };
+            setManualWatering(true);
 
-            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${currentZoneId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: statusToSend })
-            });
-
-            if (response.ok) {
-                setZones(prev => prev.map(z =>
-                    z.id === currentZoneId
-                        ? { ...z, status: { ...z.status, pump: 'ON' } }
-                        : z
-                ));
-
-                // Apagar la bomba después de 5 segundos
-                setTimeout(async () => {
-                    const offStatusToSend = {
-                        ...activeZone.status,
-                        pump: 'OFF',
-                        lastWatered: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-                    };
-
-                    const offResponse = await fetch(`${API_CONFIG.BASE_URL}/zones/${currentZoneId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ status: offStatusToSend })
-                    });
-
-                    if (offResponse.ok) {
-                        setZones(prev => prev.map(z =>
-                            z.id === currentZoneId
-                                ? { ...z, status: { ...z.status, pump: 'OFF', lastWatered: offStatusToSend.lastWatered } }
-                                : z
-                        ));
-                    }
-                }, 5000);
+            const turnedOn = await esp32Service.togglePump(currentZoneId, true);
+            if (!turnedOn) {
+                throw new Error('No se pudo activar la bomba');
             }
+
+            await loadZones();
+
+            setTimeout(async () => {
+                try {
+                    await esp32Service.togglePump(currentZoneId, false);
+                    await loadZones();
+                } finally {
+                    setManualWatering(false);
+                }
+            }, 5000);
         } catch (error) {
             Alert.alert('Error', 'No se pudo iniciar el riego manual');
+            setManualWatering(false);
         }
     };
 
@@ -508,6 +547,11 @@ export default function DashboardScreen() {
         );
     }
 
+    const isAutoModeEnabled = Boolean(activeZone.config.autoMode);
+    const pumpState = activeZone.status.pump;
+    const pumpLocked = pumpState === 'LOCKED';
+    const pumpRunning = pumpState === 'ON';
+
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <Header />
@@ -674,16 +718,18 @@ export default function DashboardScreen() {
                         <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                             <TouchableOpacity
                                 onPress={handleManualWater}
-                                disabled={activeZone.status.pump === 'ON'}
-                                activeOpacity={activeZone.status.pump === 'ON' ? 1 : 0.7}
+                                disabled={pumpRunning || pumpLocked || manualWatering}
+                                activeOpacity={pumpRunning || pumpLocked || manualWatering ? 1 : 0.7}
                                 // @ts-ignore
                                 nativeID="manual-water-button"
                             >
                                 <ExpoLinearGradient
                                     colors={
-                                        activeZone.status.pump === 'ON'
-                                            ? ['#10B981', '#059669']
-                                            : ['#1E293B', '#0F172A']
+                                        pumpLocked
+                                            ? ['#64748B', '#475569']
+                                            : pumpRunning || manualWatering
+                                                ? ['#10B981', '#059669']
+                                                : ['#1E293B', '#0F172A']
                                     }
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 1 }}
@@ -692,7 +738,12 @@ export default function DashboardScreen() {
                                         activeZone.status.pump === 'ON' && styles.manualWaterButtonActive
                                     ]}
                                 >
-                                    {activeZone.status.pump === 'ON' ? (
+                                    {pumpLocked ? (
+                                        <>
+                                            <Ionicons name="lock-closed" size={20} color="#fff" style={{ marginRight: 8 }} />
+                                            <Text style={styles.manualWaterText}>Tanque bajo</Text>
+                                        </>
+                                    ) : pumpRunning || manualWatering ? (
                                         <>
                                             <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
                                             <Text style={styles.manualWaterText}>Regando...</Text>
@@ -993,6 +1044,12 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.sm,
         fontWeight: '600',
         color: Colors.gray[600],
+    },
+    autoModeNotice: {
+        fontSize: FontSizes.xs,
+        fontWeight: '600',
+        textAlign: 'center',
+        marginBottom: Spacing.sm,
     },
     moistureTitleRow: {
         flexDirection: 'row',

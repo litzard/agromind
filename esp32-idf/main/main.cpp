@@ -27,6 +27,7 @@
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "cJSON.h"
 
 static const char *TAG = "AGROMIND";
@@ -48,11 +49,13 @@ static const char *TAG = "AGROMIND";
 #define SOIL_MOISTURE_ADC_CHANNEL ADC_CHANNEL_6  // GPIO34
 #define LDR_ADC_CHANNEL ADC_CHANNEL_7            // GPIO35
 
-#define DHT_LEVEL_TIMEOUT_US 200
+#define DHT_LEVEL_TIMEOUT_US 2000
 
-// ==================== CONFIGURACIÓN TANQUE ====================
-#define TANK_HEIGHT_CM 100.0f
-#define TANK_MAX_DISTANCE_CM 5.0f
+#define TANK_HEIGHT_CM 17.0f
+#define SENSOR_TO_BOTTOM_DISTANCE_CM 17.0f
+
+#define SOIL_MOISTURE_DRY_ADC 3200.0f   // aire (ajusta con tu lectura en seco)
+#define SOIL_MOISTURE_WET_ADC 700.0f    // saturado (ajusta con tu lectura en agua)
 
 // ==================== VARIABLES GLOBALES ====================
 static adc_oneshot_unit_handle_t adc1_handle;
@@ -62,9 +65,17 @@ static bool pump_state = false;
 static int retry_num = 0;
 static float last_temperature_c = 0.0f;
 static float last_ambient_humidity = 0.0f;
+static bool auto_mode_enabled = false;
+static float configured_moisture_threshold = 30.0f;
+static uint32_t configured_watering_duration = 10;
+static bool auto_watering_active = false;
+static TickType_t auto_watering_deadline = 0;
+static float last_soil_moisture = 0.0f;
+static float last_tank_level = 0.0f;
 
-extern const uint8_t render_root_ca_pem_start[] asm("_binary_certs_render_root_ca_pem_start");
-extern const uint8_t render_root_ca_pem_end[] asm("_binary_certs_render_root_ca_pem_end");
+static const float MOISTURE_HYSTERESIS = 5.0f;
+static const float MIN_TANK_PERCENTAGE = 5.0f;
+
 
 // ==================== UTILIDADES ====================
 
@@ -160,6 +171,27 @@ static bool read_dht11(float *temperature, float *humidity) {
     return true;
 }
 
+static void refresh_dht_measurement(void) {
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+    bool success = false;
+
+    for (int attempt = 0; attempt < 3 && !success; ++attempt) {
+        if (read_dht11(&temperature, &humidity)) {
+            success = true;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (success) {
+        last_temperature_c = temperature;
+        last_ambient_humidity = humidity;
+    } else {
+        ESP_LOGW(TAG, "DHT11 sin lectura válida tras reintentos, usando último valor");
+    }
+}
+
 // ==================== FUNCIONES DE SENSORES ====================
 
 static float read_soil_moisture(void) {
@@ -171,7 +203,11 @@ static float read_soil_moisture(void) {
         adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv);
     }
 
-    float percentage = map_value((float)adc_raw, 4095.0f, 1000.0f, 0.0f, 100.0f);
+    float percentage = map_value((float)adc_raw,
+                                 SOIL_MOISTURE_WET_ADC,
+                                 SOIL_MOISTURE_DRY_ADC,
+                                 100.0f,
+                                 0.0f);
     percentage = constrain_value(percentage, 0.0f, 100.0f);
 
     ESP_LOGI(TAG, "Humedad Suelo - Raw: %d | Voltaje: %d mV | %.1f%%",
@@ -224,12 +260,13 @@ static float read_water_level(void) {
 
     int64_t duration = esp_timer_get_time() - start_time;
     float distance_cm = (duration * 0.0343f) / 2.0f;  // velocidad sonido
-    float water_height = TANK_HEIGHT_CM - distance_cm + TANK_MAX_DISTANCE_CM;
+    distance_cm = constrain_value(distance_cm, 0.0f, SENSOR_TO_BOTTOM_DISTANCE_CM);
+    float water_height = SENSOR_TO_BOTTOM_DISTANCE_CM - distance_cm;
     float percentage = (water_height / TANK_HEIGHT_CM) * 100.0f;
     percentage = constrain_value(percentage, 0.0f, 100.0f);
 
-    ESP_LOGI(TAG, "Nivel Agua - Distancia: %.1f cm | %.1f%%",
-             distance_cm, percentage);
+    ESP_LOGI(TAG, "Nivel Agua - Distancia: %.1f cm | Altura: %.1f cm | %.1f%%",
+             distance_cm, water_height, percentage);
 
     return percentage;
 }
@@ -240,6 +277,121 @@ static void set_pump_state(bool state) {
     pump_state = state;
     gpio_set_level(RELAY_PIN, state ? 1 : 0);
     ESP_LOGI(TAG, "Bomba %s", state ? "ENCENDIDA" : "APAGADA");
+}
+
+static void update_configuration_from_commands(cJSON *commands) {
+    if (commands == NULL) {
+        return;
+    }
+
+    bool previous_auto_mode = auto_mode_enabled;
+    bool config_changed = false;
+
+    cJSON *auto_mode_item = cJSON_GetObjectItem(commands, "autoMode");
+    if (auto_mode_item && cJSON_IsBool(auto_mode_item)) {
+        bool new_auto_mode = cJSON_IsTrue(auto_mode_item);
+        if (new_auto_mode != auto_mode_enabled) {
+            auto_mode_enabled = new_auto_mode;
+            config_changed = true;
+        }
+    }
+
+    if (previous_auto_mode && !auto_mode_enabled && auto_watering_active) {
+        auto_watering_active = false;
+        if (pump_state) {
+            set_pump_state(false);
+            ESP_LOGI(TAG, "Modo auto desactivado, bomba apagada");
+        }
+    }
+
+    cJSON *threshold_item = cJSON_GetObjectItem(commands, "moistureThreshold");
+    if (threshold_item && cJSON_IsNumber(threshold_item)) {
+        float new_threshold = (float)cJSON_GetNumberValue(threshold_item);
+        if (new_threshold > 0.0f && new_threshold != configured_moisture_threshold) {
+            configured_moisture_threshold = new_threshold;
+            config_changed = true;
+        }
+    }
+
+    cJSON *duration_item = cJSON_GetObjectItem(commands, "wateringDuration");
+    if (duration_item && cJSON_IsNumber(duration_item)) {
+        double raw_duration = cJSON_GetNumberValue(duration_item);
+        uint32_t new_duration = raw_duration < 1.0 ? 1U : (uint32_t)raw_duration;
+        if (new_duration != configured_watering_duration) {
+            configured_watering_duration = new_duration;
+            config_changed = true;
+        }
+    }
+
+    if (config_changed) {
+        ESP_LOGI(TAG, "Config zona -> auto:%s umbral:%.1f%% dur:%us",
+                 auto_mode_enabled ? "ON" : "OFF",
+                 configured_moisture_threshold,
+                 configured_watering_duration);
+    }
+}
+
+static void apply_auto_mode_logic(void) {
+    // Si el modo automático está desactivado, asegurarse de que la bomba esté apagada
+    // (a menos que haya un comando manual activo)
+    if (!auto_mode_enabled) {
+        if (auto_watering_active) {
+            auto_watering_active = false;
+            if (pump_state) {
+                set_pump_state(false);
+                ESP_LOGI(TAG, "Modo auto desactivado - bomba apagada");
+            }
+        }
+        return;
+    }
+
+    if (last_tank_level <= 0.0f && last_soil_moisture <= 0.0f) {
+        return;  // aún no hay lecturas recientes
+    }
+
+    // Si el tanque está muy bajo, apagar la bomba
+    if (last_tank_level <= MIN_TANK_PERCENTAGE) {
+        if (pump_state) {
+            set_pump_state(false);
+        }
+        if (auto_watering_active) {
+            auto_watering_active = false;
+            ESP_LOGW(TAG, "Auto-riego cancelado: tanque en %.1f%%", last_tank_level);
+        }
+        return;
+    }
+
+    TickType_t now = xTaskGetTickCount();
+
+    // Si hay auto-riego activo, verificar si debe terminar
+    if (auto_watering_active) {
+        bool recovered = last_soil_moisture >= (configured_moisture_threshold + MOISTURE_HYSTERESIS);
+        bool expired = now >= auto_watering_deadline;
+
+        if (recovered || expired) {
+            auto_watering_active = false;
+            set_pump_state(false);
+            ESP_LOGI(TAG, "Auto-riego completado (%s)",
+                     recovered ? "umbral alcanzado" : "tiempo agotado");
+        }
+        return;
+    }
+
+    // Si la bomba está encendida pero NO hay auto-riego activo,
+    // es un estado manual - no interferir
+    if (pump_state) {
+        return;
+    }
+
+    // Verificar si debe iniciar auto-riego (humedad bajo el umbral)
+    if (last_soil_moisture > 0.0f && last_soil_moisture < configured_moisture_threshold) {
+        auto_watering_active = true;
+        uint32_t duration_ms = configured_watering_duration * 1000U;
+        auto_watering_deadline = now + pdMS_TO_TICKS(duration_ms);
+        set_pump_state(true);
+        ESP_LOGI(TAG, "Auto-riego iniciado: humedad %.1f%% < %.1f%%",
+                 last_soil_moisture, configured_moisture_threshold);
+    }
 }
 
 // ==================== COMUNICACIÓN API ====================
@@ -263,13 +415,54 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
                 ESP_LOGI(TAG, "Respuesta: %s", response_buffer);
                 cJSON *root = cJSON_Parse(response_buffer);
                 if (root != NULL) {
-                    cJSON *pump_cmd = cJSON_GetObjectItem(root, "pumpCommand");
-                    if (pump_cmd && cJSON_IsBool(pump_cmd)) {
-                        bool requested_state = cJSON_IsTrue(pump_cmd);
-                        if (requested_state != pump_state) {
-                            set_pump_state(requested_state);
+
+                    cJSON *commands = cJSON_GetObjectItem(root, "commands");
+                    if (commands && cJSON_IsObject(commands)) {
+                        // Primero actualizar configuración
+                        update_configuration_from_commands(commands);
+                        
+                        // Verificar si el tanque está bloqueado
+                        cJSON *tank_locked = cJSON_GetObjectItem(commands, "tankLocked");
+                        bool is_tank_locked = tank_locked && cJSON_IsTrue(tank_locked);
+                        
+                        if (is_tank_locked) {
+                            // Tanque bloqueado - apagar bomba si está encendida
+                            if (pump_state) {
+                                set_pump_state(false);
+                                auto_watering_active = false;
+                                ESP_LOGW(TAG, "Tanque bloqueado por servidor, bomba apagada");
+                            }
+                        } else {
+                            // Solo procesar comando de bomba si viene explícito (comando manual)
+                            cJSON *pump_state_obj = cJSON_GetObjectItem(commands, "pumpState");
+                            if (pump_state_obj && !cJSON_IsNull(pump_state_obj) && cJSON_IsBool(pump_state_obj)) {
+                                bool requested_state = cJSON_IsTrue(pump_state_obj);
+                                if (requested_state != pump_state) {
+                                    set_pump_state(requested_state);
+                                    // Si es comando manual, cancelar auto-watering
+                                    auto_watering_active = false;
+                                    ESP_LOGI(TAG, "Comando manual recibido: bomba %s", requested_state ? "ON" : "OFF");
+                                }
+                            }
+                            // Si pumpState es null, el firmware mantiene control (auto-mode decide)
                         }
                     }
+
+                    // Fallback para compatibilidad con respuestas antiguas
+                    if (!cJSON_HasObjectItem(root, "commands")) {
+                        cJSON *pump_cmd = cJSON_GetObjectItem(root, "pumpCommand");
+                        if (pump_cmd && cJSON_IsBool(pump_cmd)) {
+                            bool requested_state = cJSON_IsTrue(pump_cmd);
+                            if (requested_state != pump_state) {
+                                set_pump_state(requested_state);
+                                auto_watering_active = false;
+                            }
+                        }
+                    }
+
+                    // Aplicar lógica de auto-mode DESPUÉS de procesar comandos
+                    apply_auto_mode_logic();
+
                     cJSON_Delete(root);
                 }
                 response_len = 0;
@@ -291,21 +484,24 @@ static void send_sensor_data(void) {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "zoneId", ZONE_ID);
 
+    refresh_dht_measurement();
     float temperature_c = last_temperature_c;
     float ambient_humidity = last_ambient_humidity;
-    if (read_dht11(&temperature_c, &ambient_humidity)) {
-        last_temperature_c = temperature_c;
-        last_ambient_humidity = ambient_humidity;
-    } else {
-        ESP_LOGW(TAG, "Lectura DHT11 falló, usando último valor válido");
-    }
+    float soil_moisture = read_soil_moisture();
+    float water_level = read_water_level();
+    float light_level = read_light_level();
+
+    last_soil_moisture = soil_moisture;
+    last_tank_level = water_level;
+
+    apply_auto_mode_logic();
 
     cJSON *sensors = cJSON_CreateObject();
     cJSON_AddNumberToObject(sensors, "temperature", temperature_c);
     cJSON_AddNumberToObject(sensors, "ambientHumidity", ambient_humidity);
-    cJSON_AddNumberToObject(sensors, "soilMoisture", read_soil_moisture());
-    cJSON_AddNumberToObject(sensors, "waterLevel", read_water_level());
-    cJSON_AddNumberToObject(sensors, "lightLevel", read_light_level());
+    cJSON_AddNumberToObject(sensors, "soilMoisture", soil_moisture);
+    cJSON_AddNumberToObject(sensors, "waterLevel", water_level);
+    cJSON_AddNumberToObject(sensors, "lightLevel", light_level);
     cJSON_AddBoolToObject(sensors, "pumpStatus", pump_state);
     cJSON_AddItemToObject(root, "sensors", sensors);
 
@@ -317,7 +513,7 @@ static void send_sensor_data(void) {
     config.event_handler = http_event_handler;
     config.method = HTTP_METHOD_POST;
     config.transport_type = HTTP_TRANSPORT_OVER_SSL;
-    config.cert_pem = reinterpret_cast<const char *>(render_root_ca_pem_start);
+    config.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -398,7 +594,7 @@ static void wifi_init(void) {
 // ==================== TAREA PRINCIPAL ====================
 
 static void sensor_task(void *pvParameters) {
-    const TickType_t delay_ticks = pdMS_TO_TICKS(10000);
+    const TickType_t delay_ticks = pdMS_TO_TICKS(1000);
     while (true) {
         send_sensor_data();
         vTaskDelay(delay_ticks);

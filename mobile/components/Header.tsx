@@ -96,7 +96,7 @@ export const Header = () => {
         zoneId?: number
     ) => {
         const newNotif: Notification = {
-            id: Date.now().toString(),
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             type,
             title,
             message,

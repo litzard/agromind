@@ -115,17 +115,19 @@ router.post('/:id/pump', async (req: Request, res: Response) => {
       });
     }
 
+    // Guardar como comando manual pendiente para que el ESP32 lo reciba
+    // El ESP32 ejecutará el comando y reportará el estado real
     await zone.update({ 
       status: { 
         ...status, 
-        pump: action,
+        manualPumpCommand: action === 'ON',
         lastWatered: action === 'OFF' && status.pump === 'ON' 
           ? new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
           : status.lastWatered
       } 
     });
 
-    res.json({ success: true, pump: action });
+    res.json({ success: true, pump: action, pending: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -10,37 +10,99 @@ export interface WeatherData {
 }
 
 const BASE_URL = 'https://api.openweathermap.org/data/2.5';
+const FALLBACK_WEATHER: WeatherData = {
+    temp: 22,
+    condition: 'Cloudy',
+    rainProbability: 30,
+    description: 'Condiciones estimadas',
+    cityName: 'Ubicación estimada'
+};
+
+const isRateLimitError = (body: any, status: number) => {
+    if (status === 429) {
+        return true;
+    }
+    if (typeof body === 'object' && body?.message) {
+        const message = String(body.message).toLowerCase();
+        return message.includes('limit') || message.includes('blocked');
+    }
+    return false;
+};
+
+const fetchWeatherJson = async (url: string) => {
+    const response = await fetch(url);
+    const rawBody = await response.text();
+    let parsedBody: any = null;
+    try {
+        parsedBody = rawBody ? JSON.parse(rawBody) : null;
+    } catch (_err) {
+        parsedBody = rawBody;
+    }
+
+    if (!response.ok) {
+        const rateLimit = isRateLimitError(parsedBody, response.status);
+        const error = new Error(rateLimit ? 'WEATHER_RATE_LIMIT' : `WEATHER_HTTP_${response.status}`);
+        (error as any).details = parsedBody;
+        throw error;
+    }
+
+    return parsedBody;
+};
+
+const getLastKnownCoords = async () => {
+    const lastKnown = await Location.getLastKnownPositionAsync({});
+    if (!lastKnown) {
+        return null;
+    }
+    return {
+        lat: lastKnown.coords.latitude,
+        lon: lastKnown.coords.longitude
+    };
+};
 
 export const getUserLocation = async (): Promise<{ lat: number; lon: number }> => {
-    // Solicitar permisos
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
+        const cached = await getLastKnownCoords();
+        if (cached) {
+            return cached;
+        }
         throw new Error('Permiso de ubicación denegado');
     }
 
-    // Obtener ubicación actual
-    const location = await Location.getCurrentPositionAsync({});
-    return {
-        lat: location.coords.latitude,
-        lon: location.coords.longitude
-    };
+    try {
+        if (!(await Location.hasServicesEnabledAsync())) {
+            throw new Error('Servicios de ubicación desactivados');
+        }
+
+        const location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            maximumAge: 15000,
+            timeout: 10000
+        });
+
+        return {
+            lat: location.coords.latitude,
+            lon: location.coords.longitude
+        };
+    } catch (error) {
+        const cached = await getLastKnownCoords();
+        if (cached) {
+            return cached;
+        }
+        throw error;
+    }
 };
 
 export const getLocalWeather = async (lat: number, lon: number): Promise<WeatherData> => {
     try {
-        // 1. Obtener clima actual
-        const currentRes = await fetch(
+        const currentData = await fetchWeatherJson(
             `${BASE_URL}/weather?lat=${lat}&lon=${lon}&units=metric&appid=${API_CONFIG.WEATHER_API_KEY}&lang=es`
         );
-        if (!currentRes.ok) throw new Error('Error al obtener clima actual');
-        const currentData = await currentRes.json();
 
-        // 2. Obtener pronóstico (para probabilidad de lluvia)
-        const forecastRes = await fetch(
+        const forecastData = await fetchWeatherJson(
             `${BASE_URL}/forecast?lat=${lat}&lon=${lon}&units=metric&appid=${API_CONFIG.WEATHER_API_KEY}&lang=es`
         );
-        if (!forecastRes.ok) throw new Error('Error al obtener pronóstico');
-        const forecastData = await forecastRes.json();
 
         // 3. Calcular probabilidad de lluvia
         const nextForecast = forecastData.list[0];
@@ -63,8 +125,14 @@ export const getLocalWeather = async (lat: number, lon: number): Promise<Weather
             description: currentData.weather[0].description,
             cityName: currentData.name
         };
-    } catch (error) {
-        console.error('Weather Service Error:', error);
-        throw error;
+    } catch (error: any) {
+        const code = error?.message || '';
+        if (code === 'WEATHER_RATE_LIMIT') {
+            console.warn('Weather API alcanzó el límite, usando datos estimados.');
+            return FALLBACK_WEATHER;
+        }
+
+        console.error('Weather Service Error:', error?.details || error);
+        throw new Error('Error al obtener clima actual');
     }
 };

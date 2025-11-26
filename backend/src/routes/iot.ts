@@ -32,18 +32,23 @@ router.post('/sensor-data', async (req, res) => {
     };
 
     // Actualizar estado de conexión
+    // El estado de la bomba viene del ESP32 (fuente de verdad del hardware)
+    let pumpStatus: 'ON' | 'OFF' | 'LOCKED' = sensors.pumpStatus ? 'ON' : 'OFF';
+
+    // Evaluar bloqueo basándose SIEMPRE en el nivel actual del tanque
+    if (updatedSensors.tankLevel <= 5) {
+      pumpStatus = 'LOCKED';
+    }
+    // Si estaba bloqueado pero el tanque ya tiene agua suficiente, desbloquear
+    // (el ESP32 reportará el estado real de la bomba)
+
     const updatedStatus = {
       ...currentStatus,
       connection: 'ONLINE',
       lastUpdate: new Date().toISOString(),
-      pump: sensors.pumpStatus ? 'ON' : (currentStatus.pump === 'LOCKED' ? 'LOCKED' : 'OFF'),
+      pump: pumpStatus,
       hasSensorData: true
     };
-
-    // Verificar si el tanque está muy bajo
-    if (updatedSensors.tankLevel <= 5) {
-      updatedStatus.pump = 'LOCKED';
-    }
 
     await zone.update({
       sensors: updatedSensors,
@@ -53,22 +58,34 @@ router.post('/sensor-data', async (req, res) => {
     console.log(`📡 Datos recibidos de ESP32 - Zona ${zoneId}:`, sensors);
 
     // Responder con comandos para el ESP32
+    // El backend NO controla la bomba en modo automático - solo informa la configuración
+    // El firmware decide cuándo encender/apagar basándose en sus lecturas locales
     const config = zone.config as any;
+    
+    // Solo enviar comando de bomba si hay un comando manual pendiente
+    // (cuando el usuario presiona el botón desde la app)
+    const manualPumpCommand = currentStatus.manualPumpCommand;
+    
     const response: any = {
       success: true,
       commands: {
-        pumpState: updatedStatus.pump === 'ON',
+        // Solo enviar pumpState si hay comando manual, de lo contrario null para que el firmware decida
+        pumpState: manualPumpCommand !== undefined ? manualPumpCommand : null,
         autoMode: config.autoMode || false,
         moistureThreshold: config.moistureThreshold || 30,
-        wateringDuration: config.wateringDuration || 10
+        wateringDuration: config.wateringDuration || 10,
+        tankLocked: updatedStatus.pump === 'LOCKED'
       }
     };
 
-    // Si está en modo automático y la humedad es baja, activar bomba
-    if (config.autoMode && updatedSensors.soilMoisture < config.moistureThreshold && updatedSensors.tankLevel > 5) {
-      response.commands.pumpState = true;
-      updatedStatus.pump = 'ON';
-      await zone.update({ status: updatedStatus });
+    // Limpiar comando manual después de enviarlo
+    if (manualPumpCommand !== undefined) {
+      await zone.update({ 
+        status: { 
+          ...updatedStatus, 
+          manualPumpCommand: undefined 
+        } 
+      });
     }
 
     res.json(response);
@@ -78,7 +95,7 @@ router.post('/sensor-data', async (req, res) => {
   }
 });
 
-// ESP32 obtiene comandos (qué debe hacer la bomba)
+// ESP32 obtiene comandos (endpoint alternativo, principalmente para polling)
 router.get('/commands/:zoneId', async (req, res) => {
   try {
     const { zoneId } = req.params;
@@ -92,47 +109,35 @@ router.get('/commands/:zoneId', async (req, res) => {
     const config = zone.config as any;
     const sensors = zone.sensors as any;
 
-    // Lógica de control automático
-    let pumpCommand = status.pump;
+    // Evaluar si debe estar bloqueado basándose en nivel actual
+    const tankLevel = sensors.tankLevel ?? 100;
+    const isLocked = tankLevel <= 5;
 
-    if (config.autoMode && status.pump !== 'LOCKED') {
-      // Si la humedad está bajo el umbral, encender bomba
-      if (sensors.soilMoisture < config.moistureThreshold && status.pump === 'OFF') {
-        pumpCommand = 'ON';
-      }
-      // Si la humedad está 25% arriba del umbral, apagar (histéresis)
-      else if (sensors.soilMoisture > (config.moistureThreshold + 25) && status.pump === 'ON') {
-        pumpCommand = 'OFF';
-      }
-    }
+    // Verificar si hay comando manual pendiente
+    const manualPumpCommand = status.manualPumpCommand;
 
-    // Bloquear si tanque vacío
-    if (sensors.tankLevel <= 5) {
-      pumpCommand = 'LOCKED';
-    } else if (status.pump === 'LOCKED' && sensors.tankLevel > 10) {
-      pumpCommand = 'OFF'; // Desbloquear
-    }
+    const response: any = {
+      zoneId,
+      // Solo enviar pumpState si hay comando manual pendiente
+      pumpState: manualPumpCommand !== undefined ? manualPumpCommand : null,
+      autoMode: config.autoMode || false,
+      moistureThreshold: config.moistureThreshold || 30,
+      wateringDuration: config.wateringDuration || 10,
+      tankLocked: isLocked,
+      currentPumpStatus: status.pump
+    };
 
-    // Si el comando cambió, actualizar en BD
-    if (pumpCommand !== status.pump) {
+    // Limpiar comando manual después de enviarlo
+    if (manualPumpCommand !== undefined) {
       await zone.update({ 
         status: { 
           ...status, 
-          pump: pumpCommand,
-          lastWatered: pumpCommand === 'OFF' && status.pump === 'ON' 
-            ? new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-            : status.lastWatered
+          manualPumpCommand: undefined 
         } 
       });
     }
 
-    res.json({
-      zoneId,
-      pump: pumpCommand,
-      autoMode: config.autoMode,
-      moistureThreshold: config.moistureThreshold,
-      wateringDuration: config.wateringDuration,
-    });
+    res.json(response);
   } catch (error) {
     console.error('Error obteniendo comandos:', error);
     res.status(500).json({ error: 'Error del servidor' });

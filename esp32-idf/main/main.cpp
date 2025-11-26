@@ -37,7 +37,7 @@ static const char *TAG = "AGROMIND";
 #define WIFI_MAXIMUM_RETRY 5
 
 // ==================== CONFIGURACIÓN API ====================
-#define SERVER_URL "http://agromind-5hb1.onrender.com/api/iot/sensor-data"
+#define SERVER_URL "https://agromind-5hb1.onrender.com/api/iot/sensor-data"
 #define ZONE_ID 1
 
 // ==================== PINES ====================
@@ -47,6 +47,8 @@ static const char *TAG = "AGROMIND";
 #define ECHO_PIN GPIO_NUM_19
 #define SOIL_MOISTURE_ADC_CHANNEL ADC_CHANNEL_6  // GPIO34
 #define LDR_ADC_CHANNEL ADC_CHANNEL_7            // GPIO35
+
+#define DHT_LEVEL_TIMEOUT_US 200
 
 // ==================== CONFIGURACIÓN TANQUE ====================
 #define TANK_HEIGHT_CM 100.0f
@@ -58,6 +60,11 @@ static adc_cali_handle_t adc1_cali_handle = NULL;
 static bool wifi_connected = false;
 static bool pump_state = false;
 static int retry_num = 0;
+static float last_temperature_c = 0.0f;
+static float last_ambient_humidity = 0.0f;
+
+extern const uint8_t render_root_ca_pem_start[] asm("_binary_certs_render_root_ca_pem_start");
+extern const uint8_t render_root_ca_pem_end[] asm("_binary_certs_render_root_ca_pem_end");
 
 // ==================== UTILIDADES ====================
 
@@ -75,17 +82,85 @@ static float constrain_value(float x, float min_val, float max_val) {
     return x;
 }
 
+static bool wait_for_level(gpio_num_t pin, int level, uint32_t timeout_us) {
+    int64_t start = esp_timer_get_time();
+    while (gpio_get_level(pin) != level) {
+        if ((esp_timer_get_time() - start) > timeout_us) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool read_dht11(float *temperature, float *humidity) {
+    uint8_t data[5] = {0};
+
+    gpio_set_direction(DHT_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(DHT_PIN, 1);
+    ets_delay_us(1000);
+    gpio_set_level(DHT_PIN, 0);
+    ets_delay_us(20000);
+    gpio_set_level(DHT_PIN, 1);
+    ets_delay_us(30);
+    gpio_set_direction(DHT_PIN, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(DHT_PIN, GPIO_PULLUP_ONLY);
+
+    if (!wait_for_level(DHT_PIN, 0, DHT_LEVEL_TIMEOUT_US)) {
+        ESP_LOGW(TAG, "DHT11 timeout esperando LOW inicial");
+        return false;
+    }
+    if (!wait_for_level(DHT_PIN, 1, DHT_LEVEL_TIMEOUT_US)) {
+        ESP_LOGW(TAG, "DHT11 timeout esperando HIGH inicial");
+        return false;
+    }
+    if (!wait_for_level(DHT_PIN, 0, DHT_LEVEL_TIMEOUT_US)) {
+        ESP_LOGW(TAG, "DHT11 timeout esperando inicio de datos");
+        return false;
+    }
+
+    for (int i = 0; i < 40; ++i) {
+        if (!wait_for_level(DHT_PIN, 1, DHT_LEVEL_TIMEOUT_US)) {
+            ESP_LOGW(TAG, "DHT11 timeout esperando HIGH bit %d", i);
+            return false;
+        }
+        int64_t start = esp_timer_get_time();
+        if (!wait_for_level(DHT_PIN, 0, DHT_LEVEL_TIMEOUT_US)) {
+            ESP_LOGW(TAG, "DHT11 timeout esperando LOW bit %d", i);
+            return false;
+        }
+        int64_t duration = esp_timer_get_time() - start;
+        int byte_index = i / 8;
+        data[byte_index] <<= 1;
+        if (duration > 40) {
+            data[byte_index] |= 1;
+        }
+    }
+
+    uint8_t checksum = data[0] + data[1] + data[2] + data[3];
+    if ((checksum & 0xFF) != data[4]) {
+        ESP_LOGW(TAG, "DHT11 checksum inválido (%u != %u)", checksum & 0xFF, data[4]);
+        return false;
+    }
+
+    if (humidity != NULL) {
+        *humidity = data[0] + data[1] * 0.1f;
+    }
+    if (temperature != NULL) {
+        float temp = (data[2] & 0x7F) + data[3] * 0.1f;
+        if (data[2] & 0x80) {
+            temp = -temp;
+        }
+        *temperature = temp;
+    }
+
+    if (temperature != NULL && humidity != NULL) {
+        ESP_LOGI(TAG, "DHT11 -> Temp: %.1f°C | Humedad: %.1f%%", *temperature, *humidity);
+    }
+
+    return true;
+}
+
 // ==================== FUNCIONES DE SENSORES ====================
-
-static float read_temperature(void) {
-    // TODO: implementar lectura real de DHT11. Valor simulado por ahora.
-    return 25.0f;
-}
-
-static float read_ambient_humidity(void) {
-    // TODO: implementar lectura real de DHT11. Valor simulado por ahora.
-    return 60.0f;
-}
 
 static float read_soil_moisture(void) {
     int adc_raw = 0;
@@ -216,9 +291,18 @@ static void send_sensor_data(void) {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "zoneId", ZONE_ID);
 
+    float temperature_c = last_temperature_c;
+    float ambient_humidity = last_ambient_humidity;
+    if (read_dht11(&temperature_c, &ambient_humidity)) {
+        last_temperature_c = temperature_c;
+        last_ambient_humidity = ambient_humidity;
+    } else {
+        ESP_LOGW(TAG, "Lectura DHT11 falló, usando último valor válido");
+    }
+
     cJSON *sensors = cJSON_CreateObject();
-    cJSON_AddNumberToObject(sensors, "temperature", read_temperature());
-    cJSON_AddNumberToObject(sensors, "ambientHumidity", read_ambient_humidity());
+    cJSON_AddNumberToObject(sensors, "temperature", temperature_c);
+    cJSON_AddNumberToObject(sensors, "ambientHumidity", ambient_humidity);
     cJSON_AddNumberToObject(sensors, "soilMoisture", read_soil_moisture());
     cJSON_AddNumberToObject(sensors, "waterLevel", read_water_level());
     cJSON_AddNumberToObject(sensors, "lightLevel", read_light_level());
@@ -232,6 +316,8 @@ static void send_sensor_data(void) {
     config.url = SERVER_URL;
     config.event_handler = http_event_handler;
     config.method = HTTP_METHOD_POST;
+    config.transport_type = HTTP_TRANSPORT_OVER_SSL;
+    config.cert_pem = reinterpret_cast<const char *>(render_root_ca_pem_start);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -347,6 +433,15 @@ extern "C" void app_main(void) {
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    gpio_config_t dht_conf = {};
+    dht_conf.intr_type = GPIO_INTR_DISABLE;
+    dht_conf.mode = GPIO_MODE_OUTPUT_OD;
+    dht_conf.pin_bit_mask = (1ULL << DHT_PIN);
+    dht_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    dht_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&dht_conf));
+    gpio_set_level(DHT_PIN, 1);
 
     set_pump_state(false);
 

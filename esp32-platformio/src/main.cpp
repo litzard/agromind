@@ -20,7 +20,7 @@ const char* ssid = "Medina 2.0";           // Cambiar por tu SSID
 const char* password = "Amorcito";   // Cambiar por tu contraseña
 
 // ==================== CONFIGURACIÓN API ====================
-const char* serverUrl = "http://192.168.1.66:3000/api/iot/sensor-data";  // Cambiar por la IP de tu servidor
+const char* serverUrl = "http://agromind-5hb1.onrender.com/api/iot/sensor-data";  // Backend desplegado en Render
 const int zoneId = 1;  // ID de la zona que este ESP32 controla
 
 // ==================== PINES ====================

@@ -37,7 +37,7 @@ static const char *TAG = "AGROMIND";
 #define WIFI_MAXIMUM_RETRY 5
 
 // ==================== CONFIGURACIÓN API ====================
-#define SERVER_URL "http://192.168.1.66:5000/api/iot/sensor-data"
+#define SERVER_URL "http://agromind-5hb1.onrender.com/api/iot/sensor-data"
 #define ZONE_ID 1
 
 // ==================== PINES ====================

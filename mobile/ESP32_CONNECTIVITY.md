@@ -126,12 +126,12 @@ interface ESP32ConnectionStatus {
 ## 🔧 Configuración
 
 ### 1. URL del Servidor
-La app obtiene automáticamente la IP del servidor desde `API_CONFIG.BASE_URL`:
+La app usa el backend desplegado en Render mediante `API_CONFIG.BASE_URL`:
 
 ```typescript
 // mobile/constants/api.ts
 export const API_CONFIG = {
-  BASE_URL: 'http://192.168.1.100:3000'
+   BASE_URL: 'https://agromind-5hb1.onrender.com/api'
 };
 ```
 
@@ -194,10 +194,21 @@ Configurar en backend: `/backend/src/routes/iot.ts`
 ### Probar Conexión ESP32
 
 1. **Sin ESP32 físico (Simulación):**
-   ```bash
-   # En backend
-   POST http://localhost:3000/api/simulator/start/1
-   ```
+    Envía lecturas manualmente al backend hospedado en Render:
+    ```bash
+    curl -X POST https://agromind-5hb1.onrender.com/api/iot/sensor-data \
+       -H "Content-Type: application/json" \
+       -d '{
+          "zoneId": 1,
+          "sensors": {
+             "temperature": 25.2,
+             "soilMoisture": 48,
+             "waterLevel": 72,
+             "lightLevel": 55,
+             "pumpStatus": false
+          }
+       }'
+    ```
 
 2. **Con ESP32 físico:**
    - Subir código `/esp32/agromind_sensor.ino`

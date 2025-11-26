@@ -276,7 +276,7 @@ export default function AddZoneScreen() {
                             <Ionicons name="server" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
                             <TextInput
                                 style={styles.input}
-                                placeholder="http://192.168.1.66:5000"
+                                placeholder="http://agromind-5hb1.onrender.com"
                                 value={espConfig.serverUrl}
                                 onChangeText={(text) => setEspConfig(prev => ({ ...prev, serverUrl: text }))}
                                 placeholderTextColor={Colors.gray[400]}

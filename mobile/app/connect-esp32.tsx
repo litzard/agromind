@@ -27,7 +27,8 @@ export default function ConnectESP32Screen() {
         const baseUrl = API_CONFIG.BASE_URL;
         try {
             const parsedUrl = new URL(baseUrl);
-            return `${parsedUrl.protocol}//${parsedUrl.host}`;
+            const protocol = parsedUrl.protocol === 'https:' ? 'http:' : parsedUrl.protocol;
+            return `${protocol}//${parsedUrl.host}`;
         } catch (error) {
             return baseUrl.replace(/\/?api$/, '');
         }
@@ -302,7 +303,7 @@ const int zoneId = ${espConfig.zoneId};
                                 borderColor: colors.border,
                                 color: colors.text 
                             }]}
-                            placeholder="http://192.168.1.100:3000"
+                            placeholder="http://agromind-5hb1.onrender.com"
                             placeholderTextColor={colors.textSecondary}
                             value={espConfig.serverUrl}
                             onChangeText={(text) => setEspConfig(prev => ({ ...prev, serverUrl: text }))}

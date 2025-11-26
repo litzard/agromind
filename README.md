@@ -91,9 +91,9 @@ docker-compose up --build -d
 ```
 
 3. **Acceder a la aplicación**
-- Frontend: http://localhost:3000
-- Backend: http://localhost:5000
-- Base de datos: localhost:5432
+- Frontend (opcional/local): http://localhost:3000
+- Backend (Render): https://agromind-5hb1.onrender.com
+- Base de datos (Render PostgreSQL): provista vía `DATABASE_URL`
 
 ### Usuario de Prueba
 ```

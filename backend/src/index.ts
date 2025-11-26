@@ -10,6 +10,7 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+const publicApiUrl = process.env.PUBLIC_API_URL || 'https://agromind-5hb1.onrender.com';
 
 // Middleware
 app.use(cors());
@@ -47,6 +48,6 @@ app.use('/api/iot', iotRoutes);
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  console.log(`📡 Para datos ESP32: POST http://localhost:${port}/api/iot/sensor-data/:zoneId`);
-  console.log(`📥 Para comandos ESP32: GET http://localhost:${port}/api/iot/commands/:zoneId`);
+  console.log(`📡 Para datos ESP32: POST ${publicApiUrl}/api/iot/sensor-data`);
+  console.log(`📥 Para comandos ESP32: GET ${publicApiUrl}/api/iot/commands/:zoneId`);
 });

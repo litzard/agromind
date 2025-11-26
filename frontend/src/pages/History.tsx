@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Droplets, Clock, User, Cpu, Filter } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { API_URL } from '../services/api';
 
 interface Zone {
   id: string;
@@ -83,7 +84,7 @@ const History: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`http://localhost:5000/api/zones/${user.id}`);
+        const response = await fetch(`${API_URL}/zones/${user.id}`);
         if (response.ok) {
           const data = await response.json();
           setZones(data);

@@ -6,6 +6,7 @@ import {
 import { getLocalWeather, getUserLocation, type WeatherData } from '../services/weatherService';
 import { useAuth } from '../context/AuthContext';
 import AddZoneModal from '../components/AddZoneModal';
+import { API_URL } from '../services/api';
 
 // --- 1. DEFINICIÓN DE TIPOS (TypeScript Senior) ---
 
@@ -189,7 +190,7 @@ const Dashboard: React.FC = () => {
       
       try {
         setLoadingZones(true);
-        const response = await fetch(`http://localhost:5000/api/zones/${user.id}`);
+        const response = await fetch(`${API_URL}/zones/${user.id}`);
         
         if (!response.ok) {
           console.error('Error al cargar zonas, usando datos iniciales');
@@ -388,7 +389,7 @@ const Dashboard: React.FC = () => {
         }
       };
 
-      const response = await fetch('http://localhost:5000/api/zones', {
+      const response = await fetch(`${API_URL}/zones`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newZone)
@@ -420,7 +421,7 @@ const Dashboard: React.FC = () => {
     if (!confirm('¿Estás seguro de que deseas eliminar esta zona?')) return;
     
     try {
-      const response = await fetch(`http://localhost:5000/api/zones/${zoneId}`, {
+      const response = await fetch(`${API_URL}/zones/${zoneId}`, {
         method: 'DELETE',
       });
 

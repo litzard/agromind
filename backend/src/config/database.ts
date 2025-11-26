@@ -3,24 +3,30 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'agormind_db', // Nombre con el error de dedo (o el que corregiste)
-  process.env.DB_USER || 'postgres',
-  process.env.DB_PASSWORD || 'password',
-  {
-    host: process.env.DB_HOST || 'localhost',
-    dialect: 'postgres',
-    logging: false,
-    dialectOptions: {
-      // ESTO ES LO QUE TE FALTA PARA QUE RENDER NO MATE TU APP
-      ssl: process.env.DB_HOST && process.env.DB_HOST.includes('render.com')
-        ? {
-            require: true,
-            rejectUnauthorized: false
-          }
-        : false
-    },
-  }
-);
+const isRenderConnection = Boolean(process.env.DATABASE_URL);
+
+const sequelize = isRenderConnection
+  ? new Sequelize(process.env.DATABASE_URL as string, {
+      dialect: 'postgres',
+      protocol: 'postgres',
+      logging: false,
+      dialectOptions: {
+        ssl: {
+          require: true,
+          rejectUnauthorized: false,
+        },
+      },
+    })
+  : new Sequelize(
+      process.env.DB_NAME || 'agromind_db',
+      process.env.DB_USER || 'postgres',
+      process.env.DB_PASSWORD || 'password',
+      {
+        host: process.env.DB_HOST || 'localhost',
+        port: Number(process.env.DB_PORT) || 5432,
+        dialect: 'postgres',
+        logging: false,
+      }
+    );
 
 export default sequelize;

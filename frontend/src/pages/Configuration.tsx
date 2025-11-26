@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Cloud, Droplets, Moon, Sun } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { API_URL } from '../services/api';
 
 interface Zone {
   id: string;
@@ -29,7 +30,7 @@ const Configuration: React.FC = () => {
       if (!user?.id) return;
       
       try {
-        const response = await fetch(`http://localhost:5000/api/zones/${user.id}`);
+        const response = await fetch(`${API_URL}/zones/${user.id}`);
         if (!response.ok) throw new Error('Error al cargar zonas');
         
         const data = await response.json();
@@ -66,7 +67,7 @@ const Configuration: React.FC = () => {
     if (!selectedZone) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/zones/${selectedZone.id}`, {
+      const response = await fetch(`${API_URL}/zones/${selectedZone.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

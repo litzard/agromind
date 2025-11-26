@@ -3,6 +3,19 @@ import Zone from '../models/Zone';
 
 const router = Router();
 
+// Obtener una zona específica (por ID)
+router.get('/detail/:id', async (req: Request, res: Response) => {
+  try {
+    const zone = await Zone.findByPk(req.params.id);
+    if (!zone) {
+      return res.status(404).json({ error: 'Zona no encontrada' });
+    }
+    res.json(zone);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Obtener zonas de un usuario
 router.get('/:userId', async (req: Request, res: Response) => {
   try {
@@ -16,7 +29,30 @@ router.get('/:userId', async (req: Request, res: Response) => {
 // Crear zona
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const zone = await Zone.create(req.body);
+    const defaultSensors = {
+      soilMoisture: null,
+      temperature: null,
+      humidity: null,
+      lightLevel: null,
+      tankLevel: null,
+      waterLevel: null,
+    };
+
+    const defaultStatus = {
+      pump: 'OFF',
+      connection: 'OFFLINE',
+      lastWatered: 'Nunca',
+      lastUpdate: null,
+      hasSensorData: false,
+    };
+
+    const payload = {
+      ...req.body,
+      sensors: req.body.sensors ?? defaultSensors,
+      status: req.body.status ? { ...defaultStatus, ...req.body.status } : defaultStatus,
+    };
+
+    const zone = await Zone.create(payload);
     res.status(201).json(zone);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

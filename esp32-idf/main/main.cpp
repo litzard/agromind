@@ -1,296 +1,382 @@
 /*
  * AgroMind - Sistema de Riego Inteligente
- * ESP32 Sensor Node
- * 
+ * ESP32 Sensor Node (ESP-IDF)
+ *
  * Componentes:
- * - DHT11 (Temperatura y Humedad Ambiental) -> D4
- * - Sensor de Humedad de Suelo -> D34 (Analógico)
- * - LDR (Sensor de Luz) -> D35 (Analógico)
- * - Sensor Ultrasónico HC-SR04 (Nivel de Agua) -> D18 (Trig), D19 (Echo)
- * - Relé (Control de Bomba) -> D5
+ * - DHT11 (Temperatura y Humedad Ambiental) -> GPIO4
+ * - Sensor de Humedad de Suelo -> GPIO34 (ADC1_CH6)
+ * - LDR (Sensor de Luz) -> GPIO35 (ADC1_CH7)
+ * - Sensor Ultrasónico HC-SR04 -> GPIO18 (TRIG), GPIO19 (ECHO)
+ * - Relé (Control de Bomba) -> GPIO5
  */
 
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-#include <DHT.h>
+#include <stdio.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "rom/ets_sys.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "esp_system.h"
+#include "nvs_flash.h"
+#include "esp_netif.h"
+#include "esp_http_client.h"
+#include "cJSON.h"
+
+static const char *TAG = "AGROMIND";
 
 // ==================== CONFIGURACIÓN WIFI ====================
-const char* ssid = "Medina 2.0";           // Cambiar por tu SSID
-const char* password = "Amorcito";   // Cambiar por tu contraseña
+#define WIFI_SSID "Medina 2.0"
+#define WIFI_PASS "Amorcito"
+#define WIFI_MAXIMUM_RETRY 5
 
 // ==================== CONFIGURACIÓN API ====================
-const char* serverUrl = "http://192.168.1.66:3000/api/iot/sensor-data";  // Cambiar por la IP de tu servidor
-const int zoneId = 1;  // ID de la zona que este ESP32 controla
+#define SERVER_URL "http://192.168.1.66:5000/api/iot/sensor-data"
+#define ZONE_ID 1
 
 // ==================== PINES ====================
-#define RELAY_PIN 5          // D5 - Control de Bomba
-#define DHT_PIN 4            // D4 - DHT11
-#define TRIG_PIN 18          // D18 - Ultrasónico Trigger
-#define ECHO_PIN 19          // D19 - Ultrasónico Echo
-#define SOIL_MOISTURE_PIN 34 // D34 - Humedad de Suelo (Analógico)
-#define LDR_PIN 35           // D35 - LDR Sensor de Luz (Analógico)
-
-// ==================== CONFIGURACIÓN DHT ====================
-#define DHTTYPE DHT11
-DHT dht(DHT_PIN, DHTTYPE);
+#define RELAY_PIN GPIO_NUM_25
+#define DHT_PIN GPIO_NUM_4
+#define TRIG_PIN GPIO_NUM_18
+#define ECHO_PIN GPIO_NUM_19
+#define SOIL_MOISTURE_ADC_CHANNEL ADC_CHANNEL_6  // GPIO34
+#define LDR_ADC_CHANNEL ADC_CHANNEL_7            // GPIO35
 
 // ==================== CONFIGURACIÓN TANQUE ====================
-const float TANK_HEIGHT = 100.0;  // Altura del tanque en cm (ajustar según tu tanque)
-const float TANK_MAX_DISTANCE = 5.0;  // Distancia mínima del sensor al agua cuando está lleno (cm)
+#define TANK_HEIGHT_CM 100.0f
+#define TANK_MAX_DISTANCE_CM 5.0f
 
 // ==================== VARIABLES GLOBALES ====================
-unsigned long lastSendTime = 0;
-const unsigned long sendInterval = 10000;  // Enviar datos cada 10 segundos
-bool pumpState = false;
+static adc_oneshot_unit_handle_t adc1_handle;
+static adc_cali_handle_t adc1_cali_handle = NULL;
+static bool wifi_connected = false;
+static bool pump_state = false;
+static int retry_num = 0;
+
+// ==================== UTILIDADES ====================
+
+static float map_value(float x, float in_min, float in_max, float out_min, float out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+static float constrain_value(float x, float min_val, float max_val) {
+    if (x < min_val) {
+        return min_val;
+    }
+    if (x > max_val) {
+        return max_val;
+    }
+    return x;
+}
 
 // ==================== FUNCIONES DE SENSORES ====================
 
-// Leer DHT11 (Temperatura)
-float readTemperature() {
-  float temp = dht.readTemperature();
-  if (isnan(temp)) {
-    Serial.println("Error leyendo temperatura del DHT11");
-    return 0.0;
-  }
-  return temp;
+static float read_temperature(void) {
+    // TODO: implementar lectura real de DHT11. Valor simulado por ahora.
+    return 25.0f;
 }
 
-// Leer DHT11 (Humedad Ambiental) 
-float readAmbientHumidity() {
-  float humidity = dht.readHumidity();
-  if (isnan(humidity)) {
-    Serial.println("Error leyendo humedad del DHT11");
-    return 0.0;
-  }
-  return humidity;
+static float read_ambient_humidity(void) {
+    // TODO: implementar lectura real de DHT11. Valor simulado por ahora.
+    return 60.0f;
 }
 
-// Leer Humedad del Suelo (Sensor Analógico)
-float readSoilMoisture() {
-  int rawValue = analogRead(SOIL_MOISTURE_PIN);
-  // Convertir valor analógico (0-4095) a porcentaje (0-100%)
-  // Valores típicos: Seco=3000-4095, Húmedo=1000-2000, Agua=0-1000
-  // Ajustar según calibración de tu sensor
-  float percentage = map(rawValue, 4095, 1000, 0, 100);
-  percentage = constrain(percentage, 0, 100);
-  
-  Serial.print("Humedad Suelo - Raw: ");
-  Serial.print(rawValue);
-  Serial.print(" | Porcentaje: ");
-  Serial.println(percentage);
-  
-  return percentage;
+static float read_soil_moisture(void) {
+    int adc_raw = 0;
+    ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, SOIL_MOISTURE_ADC_CHANNEL, &adc_raw));
+
+    int voltage_mv = 0;
+    if (adc1_cali_handle != NULL) {
+        adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv);
+    }
+
+    float percentage = map_value((float)adc_raw, 4095.0f, 1000.0f, 0.0f, 100.0f);
+    percentage = constrain_value(percentage, 0.0f, 100.0f);
+
+    ESP_LOGI(TAG, "Humedad Suelo - Raw: %d | Voltaje: %d mV | %.1f%%",
+             adc_raw, voltage_mv, percentage);
+
+    return percentage;
 }
 
-// Leer Nivel de Agua con Ultrasónico
-float readWaterLevel() {
-  // Enviar pulso trigger
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  
-  // Leer pulso echo
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // Timeout 30ms
-  
-  if (duration == 0) {
-    Serial.println("Error: Timeout en sensor ultrasónico");
-    return 0.0;
-  }
-  
-  // Calcular distancia en cm (velocidad del sonido = 343 m/s)
-  float distance = duration * 0.0343 / 2;
-  
-  // Calcular porcentaje de llenado
-  float waterHeight = TANK_HEIGHT - distance + TANK_MAX_DISTANCE;
-  float percentage = (waterHeight / TANK_HEIGHT) * 100.0;
-  percentage = constrain(percentage, 0, 100);
-  
-  Serial.print("Nivel Agua - Distancia: ");
-  Serial.print(distance);
-  Serial.print(" cm | Porcentaje: ");
-  Serial.println(percentage);
-  
-  return percentage;
+static float read_light_level(void) {
+    int adc_raw = 0;
+    ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, LDR_ADC_CHANNEL, &adc_raw));
+
+    int voltage_mv = 0;
+    if (adc1_cali_handle != NULL) {
+        adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv);
+    }
+
+    float percentage = map_value((float)adc_raw, 0.0f, 4095.0f, 0.0f, 100.0f);
+    percentage = constrain_value(percentage, 0.0f, 100.0f);
+
+    ESP_LOGI(TAG, "Luz - Raw: %d | Voltaje: %d mV | %.1f%%",
+             adc_raw, voltage_mv, percentage);
+
+    return percentage;
 }
 
-// Leer Sensor de Luz (LDR)
-float readLightLevel() {
-  int rawValue = analogRead(LDR_PIN);
-  // Convertir valor analógico (0-4095) a porcentaje de luz (0-100%)
-  // Oscuridad=0-500, Luz ambiente=500-2000, Luz directa=2000-4095
-  float percentage = map(rawValue, 0, 4095, 0, 100);
-  percentage = constrain(percentage, 0, 100);
-  
-  Serial.print("Luz - Raw: ");
-  Serial.print(rawValue);
-  Serial.print(" | Porcentaje: ");
-  Serial.println(percentage);
-  
-  return percentage;
+static float read_water_level(void) {
+    gpio_set_level(TRIG_PIN, 0);
+    ets_delay_us(2);
+    gpio_set_level(TRIG_PIN, 1);
+    ets_delay_us(10);
+    gpio_set_level(TRIG_PIN, 0);
+
+    const int64_t timeout_us = 30000;
+    int64_t start_wait = esp_timer_get_time();
+    while (gpio_get_level(ECHO_PIN) == 0) {
+        if (esp_timer_get_time() - start_wait > timeout_us) {
+            ESP_LOGW(TAG, "Timeout esperando echo HIGH");
+            return 0.0f;
+        }
+    }
+
+    int64_t start_time = esp_timer_get_time();
+    while (gpio_get_level(ECHO_PIN) == 1) {
+        if (esp_timer_get_time() - start_time > timeout_us) {
+            ESP_LOGW(TAG, "Timeout midiendo eco");
+            break;
+        }
+    }
+
+    int64_t duration = esp_timer_get_time() - start_time;
+    float distance_cm = (duration * 0.0343f) / 2.0f;  // velocidad sonido
+    float water_height = TANK_HEIGHT_CM - distance_cm + TANK_MAX_DISTANCE_CM;
+    float percentage = (water_height / TANK_HEIGHT_CM) * 100.0f;
+    percentage = constrain_value(percentage, 0.0f, 100.0f);
+
+    ESP_LOGI(TAG, "Nivel Agua - Distancia: %.1f cm | %.1f%%",
+             distance_cm, percentage);
+
+    return percentage;
 }
 
 // ==================== CONTROL DE BOMBA ====================
 
-void setPumpState(bool state) {
-  pumpState = state;
-  digitalWrite(RELAY_PIN, state ? HIGH : LOW);
-  Serial.print("Bomba: ");
-  Serial.println(state ? "ENCENDIDA" : "APAGADA");
+static void set_pump_state(bool state) {
+    pump_state = state;
+    gpio_set_level(RELAY_PIN, state ? 1 : 0);
+    ESP_LOGI(TAG, "Bomba %s", state ? "ENCENDIDA" : "APAGADA");
 }
 
 // ==================== COMUNICACIÓN API ====================
 
-void sendSensorData() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi desconectado. Reconectando...");
-    connectWiFi();
-    return;
-  }
+static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
+    static char response_buffer[512];
+    static int response_len = 0;
 
-  HTTPClient http;
-  http.begin(serverUrl);
-  http.addHeader("Content-Type", "application/json");
-  
-  // Crear JSON con datos de sensores
-  StaticJsonDocument<512> doc;
-  doc["zoneId"] = zoneId;
-  
-  JsonObject sensors = doc.createNestedObject("sensors");
-  sensors["temperature"] = readTemperature();
-  sensors["soilMoisture"] = readSoilMoisture();
-  sensors["waterLevel"] = readWaterLevel();
-  sensors["lightLevel"] = readLightLevel();
-  sensors["pumpStatus"] = pumpState;
-  
-  String jsonData;
-  serializeJson(doc, jsonData);
-  
-  Serial.println("\n=== Enviando datos al servidor ===");
-  Serial.println(jsonData);
-  
-  int httpResponseCode = http.POST(jsonData);
-  
-  if (httpResponseCode > 0) {
-    String response = http.getString();
-    Serial.print("Respuesta HTTP: ");
-    Serial.println(httpResponseCode);
-    Serial.println(response);
-    
-    // Procesar respuesta del servidor (control de bomba)
-    if (httpResponseCode == 200) {
-      StaticJsonDocument<256> responseDoc;
-      DeserializationError error = deserializeJson(responseDoc, response);
-      
-      if (!error && responseDoc.containsKey("pumpCommand")) {
-        bool shouldPumpBeOn = responseDoc["pumpCommand"];
-        if (shouldPumpBeOn != pumpState) {
-          setPumpState(shouldPumpBeOn);
-        }
-      }
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            if (!esp_http_client_is_chunked_response(evt->client)) {
+                if ((response_len + evt->data_len) < (int)sizeof(response_buffer)) {
+                    memcpy(response_buffer + response_len, evt->data, evt->data_len);
+                    response_len += evt->data_len;
+                    response_buffer[response_len] = '\0';
+                }
+            }
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            if (response_len > 0) {
+                ESP_LOGI(TAG, "Respuesta: %s", response_buffer);
+                cJSON *root = cJSON_Parse(response_buffer);
+                if (root != NULL) {
+                    cJSON *pump_cmd = cJSON_GetObjectItem(root, "pumpCommand");
+                    if (pump_cmd && cJSON_IsBool(pump_cmd)) {
+                        bool requested_state = cJSON_IsTrue(pump_cmd);
+                        if (requested_state != pump_state) {
+                            set_pump_state(requested_state);
+                        }
+                    }
+                    cJSON_Delete(root);
+                }
+                response_len = 0;
+            }
+            break;
+        default:
+            break;
     }
-  } else {
-    Serial.print("Error en POST: ");
-    Serial.println(httpResponseCode);
-  }
-  
-  http.end();
+
+    return ESP_OK;
+}
+
+static void send_sensor_data(void) {
+    if (!wifi_connected) {
+        ESP_LOGW(TAG, "WiFi no conectado");
+        return;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "zoneId", ZONE_ID);
+
+    cJSON *sensors = cJSON_CreateObject();
+    cJSON_AddNumberToObject(sensors, "temperature", read_temperature());
+    cJSON_AddNumberToObject(sensors, "ambientHumidity", read_ambient_humidity());
+    cJSON_AddNumberToObject(sensors, "soilMoisture", read_soil_moisture());
+    cJSON_AddNumberToObject(sensors, "waterLevel", read_water_level());
+    cJSON_AddNumberToObject(sensors, "lightLevel", read_light_level());
+    cJSON_AddBoolToObject(sensors, "pumpStatus", pump_state);
+    cJSON_AddItemToObject(root, "sensors", sensors);
+
+    char *payload = cJSON_PrintUnformatted(root);
+    ESP_LOGI(TAG, "Enviando payload: %s", payload);
+
+    esp_http_client_config_t config = {};
+    config.url = SERVER_URL;
+    config.event_handler = http_event_handler;
+    config.method = HTTP_METHOD_POST;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, payload, strlen(payload));
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP Status = %d, content_length = %lld",
+                 esp_http_client_get_status_code(client),
+                 esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "HTTP POST falló: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    cJSON_Delete(root);
+    free(payload);
 }
 
 // ==================== CONFIGURACIÓN WIFI ====================
 
-void connectWiFi() {
-  Serial.println("\nConectando a WiFi...");
-  WiFi.begin(ssid, password);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✓ WiFi conectado");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n✗ Error conectando a WiFi");
-  }
-}
-
-// ==================== SETUP ====================
-
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  
-  Serial.println("\n\n========================================");
-  Serial.println("    AgroMind - Sistema de Riego");
-  Serial.println("         ESP32 Sensor Node");
-  Serial.println("========================================\n");
-  
-  // Configurar pines
-  pinMode(RELAY_PIN, OUTPUT);
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  pinMode(SOIL_MOISTURE_PIN, INPUT);
-  pinMode(LDR_PIN, INPUT);
-  
-  // Inicializar bomba apagada
-  setPumpState(false);
-  
-  // Inicializar DHT11
-  dht.begin();
-  Serial.println("✓ DHT11 inicializado");
-  
-  // Conectar a WiFi
-  connectWiFi();
-  
-  Serial.println("\n✓ Sistema listo\n");
-  
-  // Lectura inicial de sensores
-  Serial.println("=== Lectura inicial de sensores ===");
-  Serial.print("Temperatura: ");
-  Serial.print(readTemperature());
-  Serial.println(" °C");
-  
-  Serial.print("Humedad Suelo: ");
-  Serial.print(readSoilMoisture());
-  Serial.println(" %");
-  
-  Serial.print("Nivel Agua: ");
-  Serial.print(readWaterLevel());
-  Serial.println(" %");
-  
-  Serial.print("Luz: ");
-  Serial.print(readLightLevel());
-  Serial.println(" %");
-  Serial.println("===================================\n");
-}
-
-// ==================== LOOP ====================
-
-void loop() {
-  unsigned long currentTime = millis();
-  
-  // Enviar datos cada 10 segundos
-  if (currentTime - lastSendTime >= sendInterval) {
-    sendSensorData();
-    lastSendTime = currentTime;
-  }
-  
-  // Verificar conexión WiFi cada 30 segundos
-  static unsigned long lastWiFiCheck = 0;
-  if (currentTime - lastWiFiCheck >= 30000) {
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("WiFi desconectado, reconectando...");
-      connectWiFi();
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (retry_num < WIFI_MAXIMUM_RETRY) {
+            esp_wifi_connect();
+            retry_num++;
+            ESP_LOGW(TAG, "Reintentando conexión WiFi (%d)", retry_num);
+        } else {
+            ESP_LOGE(TAG, "No se pudo conectar a WiFi");
+        }
+        wifi_connected = false;
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI(TAG, "IP obtenida: " IPSTR, IP2STR(&event->ip_info.ip));
+        retry_num = 0;
+        wifi_connected = true;
     }
-    lastWiFiCheck = currentTime;
-  }
-  
-  delay(100);
+}
+
+static void wifi_init(void) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config = {};
+    strncpy((char *)wifi_config.sta.ssid, WIFI_SSID, sizeof(wifi_config.sta.ssid));
+    strncpy((char *)wifi_config.sta.password, WIFI_PASS, sizeof(wifi_config.sta.password));
+    wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
+    wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "Conectando a SSID: %s", WIFI_SSID);
+}
+
+// ==================== TAREA PRINCIPAL ====================
+
+static void sensor_task(void *pvParameters) {
+    const TickType_t delay_ticks = pdMS_TO_TICKS(10000);
+    while (true) {
+        send_sensor_data();
+        vTaskDelay(delay_ticks);
+    }
+}
+
+// ==================== APP MAIN ====================
+
+extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "    AgroMind - Sistema de Riego");
+    ESP_LOGI(TAG, "         ESP32 Sensor Node");
+    ESP_LOGI(TAG, "========================================");
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << RELAY_PIN) | (1ULL << TRIG_PIN);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << ECHO_PIN);
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    set_pump_state(false);
+
+    adc_oneshot_unit_init_cfg_t init_config1 = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
+
+    adc_oneshot_chan_cfg_t chan_config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, SOIL_MOISTURE_ADC_CHANNEL, &chan_config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, LDR_ADC_CHANNEL, &chan_config));
+
+    adc_cali_line_fitting_config_t cali_config = {
+        .unit_id = ADC_UNIT_1,
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+        .default_vref = 1100,
+    };
+    if (adc_cali_create_scheme_line_fitting(&cali_config, &adc1_cali_handle) == ESP_OK) {
+        ESP_LOGI(TAG, "ADC calibrado correctamente");
+    } else {
+        ESP_LOGW(TAG, "No se pudo calibrar ADC, se usará valor bruto");
+    }
+
+    wifi_init();
+
+    ESP_LOGI(TAG, "Sistema listo, iniciando tarea de sensores");
+    xTaskCreate(sensor_task, "sensor_task", 4096, NULL, 5, NULL);
 }

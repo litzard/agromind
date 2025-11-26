@@ -49,7 +49,7 @@
 
 ### Mobile App → Backend
 - **Polling cada 5 segundos** desde dashboard
-- Endpoint: `GET /zones/:zoneId`
+- Endpoint: `GET /zones/detail/:zoneId`
 - Servicio: `esp32Service.startPolling()`
 
 ### ESP32 → Backend

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -6,7 +6,6 @@ import {
     TextInput,
     TouchableOpacity,
     ScrollView,
-    Alert,
     ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -15,23 +14,44 @@ import { Header } from '../components/Header';
 import { useTheme } from '../context/ThemeContext';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../styles/theme';
 import { API_CONFIG } from '../constants/api';
+import { ActionModal, ActionModalButton } from '../components/ActionModal';
 
 export default function ConnectESP32Screen() {
     const router = useRouter();
     const { colors } = useTheme();
     const params = useLocalSearchParams();
-    const zoneId = params.zoneId;
+    const rawZoneId = params.zoneId;
+    const zoneId = Array.isArray(rawZoneId) ? rawZoneId[0] : rawZoneId;
+
+    const getDefaultServerUrl = () => {
+        const baseUrl = API_CONFIG.BASE_URL;
+        try {
+            const parsedUrl = new URL(baseUrl);
+            return `${parsedUrl.protocol}//${parsedUrl.host}`;
+        } catch (error) {
+            return baseUrl.replace(/\/?api$/, '');
+        }
+    };
 
     const [step, setStep] = useState(1); // 1: WiFi Config, 2: Testing Connection, 3: Success
     const [loading, setLoading] = useState(false);
+    const [modalConfig, setModalConfig] = useState({
+        visible: false,
+        title: '',
+        message: '',
+        icon: 'information-circle' as keyof typeof Ionicons.glyphMap,
+        buttons: [] as ActionModalButton[]
+    });
     
     // Datos del ESP32
-    const [espConfig, setEspConfig] = useState({
-        ssid: '',
-        password: '',
-        serverUrl: '',
+    const [espConfig, setEspConfig] = useState(() => ({
+        ssid: typeof params.ssid === 'string' ? params.ssid : '',
+        password: typeof params.password === 'string' ? params.password : '',
+        serverUrl: typeof params.serverUrl === 'string' && params.serverUrl.trim() !== ''
+            ? params.serverUrl
+            : getDefaultServerUrl(),
         zoneId: zoneId || '1'
-    });
+    }));
 
     const [connectionStatus, setConnectionStatus] = useState({
         wifi: false,
@@ -39,20 +59,21 @@ export default function ConnectESP32Screen() {
         sensors: false
     });
 
-    useEffect(() => {
-        // Obtener IP local del servidor
-        getServerIP();
-    }, []);
+    const closeModal = () => setModalConfig(prev => ({ ...prev, visible: false }));
 
-    const getServerIP = async () => {
-        try {
-            // Obtener la IP del servidor desde la configuración
-            const baseUrl = API_CONFIG.BASE_URL;
-            const ip = baseUrl.replace('http://', '').replace(':3000', '');
-            setEspConfig(prev => ({ ...prev, serverUrl: `http://${ip}:3000` }));
-        } catch (error) {
-            console.error('Error obteniendo IP:', error);
-        }
+    const showModal = (config: {
+        title: string;
+        message?: string;
+        icon?: keyof typeof Ionicons.glyphMap;
+        buttons: ActionModalButton[];
+    }) => {
+        setModalConfig({
+            visible: true,
+            title: config.title,
+            message: config.message ?? '',
+            icon: config.icon ?? 'information-circle',
+            buttons: config.buttons,
+        });
     };
 
     const testESPConnection = async () => {
@@ -64,15 +85,21 @@ export default function ConnectESP32Screen() {
             setConnectionStatus(prev => ({ ...prev, wifi: true }));
             await new Promise(resolve => setTimeout(resolve, 1500));
 
+            if (!zoneId) {
+                throw new Error('Zona no especificada');
+            }
+
+            const zoneDetailUrl = `${API_CONFIG.BASE_URL}/zones/detail/${zoneId}`;
+
             // Probar conexión con servidor
-            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${zoneId}`);
+            const response = await fetch(zoneDetailUrl);
             if (response.ok) {
                 setConnectionStatus(prev => ({ ...prev, server: true }));
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
 
             // Probar lectura de sensores
-            const sensorsResponse = await fetch(`${API_CONFIG.BASE_URL}/zones/${zoneId}`);
+            const sensorsResponse = await fetch(zoneDetailUrl);
             if (sensorsResponse.ok) {
                 const data = await sensorsResponse.json();
                 if (data.sensors) {
@@ -83,11 +110,15 @@ export default function ConnectESP32Screen() {
             }
         } catch (error) {
             console.error('Error en prueba de conexión:', error);
-            Alert.alert(
-                'Error de Conexión',
-                'No se pudo conectar con el ESP32. Verifica que esté encendido y las credenciales sean correctas.',
-                [{ text: 'Reintentar', onPress: () => setStep(1) }]
-            );
+            showModal({
+                title: 'Error de Conexión',
+                message: 'No se pudo conectar con el ESP32. Verifica que esté encendido y que los datos sean correctos.',
+                icon: 'alert-circle',
+                buttons: [
+                    { label: 'Volver', onPress: () => { closeModal(); setStep(1); } },
+                    { label: 'Reintentar', onPress: () => { closeModal(); testESPConnection(); }, variant: 'primary' }
+                ]
+            });
         } finally {
             setLoading(false);
         }
@@ -95,27 +126,50 @@ export default function ConnectESP32Screen() {
 
     const handleConnect = () => {
         if (!espConfig.ssid || !espConfig.password) {
-            Alert.alert('Error', 'Por favor completa todos los campos');
+            showModal({
+                title: 'Completa los datos',
+                message: 'Necesitas ingresar el nombre y la contraseña de tu WiFi para continuar.',
+                icon: 'information-circle',
+                buttons: [{ label: 'Entendido', onPress: closeModal, variant: 'primary' }]
+            });
             return;
         }
 
-        Alert.alert(
-            'Configurar ESP32',
-            'Para configurar el ESP32:\n\n' +
-            '1. Conecta tu ESP32 a la corriente\n' +
-            '2. Abre el código Arduino y actualiza:\n' +
-            `   • WiFi SSID: "${espConfig.ssid}"\n` +
-            `   • WiFi Password: "${espConfig.password}"\n` +
-            `   • Server URL: "${espConfig.serverUrl}"\n` +
-            `   • Zone ID: ${espConfig.zoneId}\n\n` +
-            '3. Sube el código al ESP32\n' +
-            '4. Presiona "Probar Conexión"',
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                { text: 'Copiar Config', onPress: copyConfig },
-                { text: 'Probar Conexión', onPress: testESPConnection }
+        const infoMessage = [
+            '1. Conecta el ESP32 a la corriente.',
+            '2. Abre tu código e ingresa:',
+            `   • WiFi SSID: "${espConfig.ssid}"`,
+            `   • WiFi Password: "${espConfig.password}"`,
+            `   • Server URL: "${espConfig.serverUrl}"`,
+            `   • Zone ID: ${espConfig.zoneId}`,
+            '3. Sube el firmware al ESP32.',
+            '4. Presiona "Probar conexión" para verificar.'
+        ].join('\n');
+
+        showModal({
+            title: 'Configurar ESP32',
+            message: infoMessage,
+            icon: 'hardware-chip',
+            buttons: [
+                { label: 'Cerrar', onPress: closeModal },
+                {
+                    label: 'Copiar Config',
+                    icon: 'copy',
+                    onPress: () => {
+                        copyConfig();
+                        closeModal();
+                    }
+                },
+                {
+                    label: 'Probar Conexión',
+                    variant: 'primary',
+                    onPress: () => {
+                        closeModal();
+                        testESPConnection();
+                    }
+                }
             ]
-        );
+        });
     };
 
     const copyConfig = () => {
@@ -126,22 +180,21 @@ const char* serverUrl = "${espConfig.serverUrl}/api/iot/sensor-data";
 const int zoneId = ${espConfig.zoneId};
         `.trim();
 
-        Alert.alert(
-            'Configuración Copiada',
-            'Pega esta configuración en tu código Arduino:\n\n' + config,
-            [{ text: 'OK' }]
-        );
+        showModal({
+            title: 'Configuración copiada',
+            message: 'Pega esta configuración en tu código Arduino:\n\n' + config,
+            icon: 'clipboard',
+            buttons: [{ label: 'Listo', onPress: closeModal, variant: 'primary' }]
+        });
     };
 
     const handleFinish = () => {
-        Alert.alert(
-            '¡Conexión Exitosa!',
-            'El ESP32 está enviando datos correctamente. Podrás ver las lecturas en tiempo real en el dashboard.',
-            [{ 
-                text: 'Ir al Dashboard', 
-                onPress: () => router.replace('/(tabs)') 
-            }]
-        );
+        showModal({
+            title: '¡Conexión exitosa!',
+            message: 'El ESP32 está enviando datos correctamente. Revisa el dashboard para ver las lecturas en tiempo real.',
+            icon: 'checkmark-circle',
+            buttons: [{ label: 'Ir al Dashboard', variant: 'primary', onPress: () => { closeModal(); router.replace('/(tabs)'); } }]
+        });
     };
 
     return (
@@ -365,6 +418,14 @@ const int zoneId = ${espConfig.zoneId};
 
                 <View style={{ height: 40 }} />
             </ScrollView>
+            <ActionModal
+                visible={modalConfig.visible}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                icon={modalConfig.icon}
+                buttons={modalConfig.buttons}
+                onClose={closeModal}
+            />
         </View>
     );
 }

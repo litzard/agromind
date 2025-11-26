@@ -4,27 +4,32 @@ export interface User {
     email: string;
 }
 
+type SensorValue = number | null | undefined;
+
 export interface ZoneConfig {
     autoMode: boolean;
     moistureThreshold: number;
-    checkInterval: number;
-    pumpDuration: number;
+    wateringDuration: number;
     useWeatherApi: boolean;
     respectRainForecast: boolean;
 }
 
 export interface ZoneSensors {
-    soilMoisture: number;
-    temperature: number;
-    humidity: number;
-    lightLevel: number;
-    tankLevel: number;
+    soilMoisture: SensorValue;
+    temperature: SensorValue;
+    humidity: SensorValue;
+    lightLevel: SensorValue;
+    tankLevel: SensorValue;
+    waterLevel?: SensorValue;
 }
 
 export interface ZoneStatus {
-    pump: 'ON' | 'OFF';
+    pump: 'ON' | 'OFF' | 'LOCKED';
     lastWatered: string | null;
-    nextScheduledWatering: string | null;
+    nextScheduledWatering?: string | null;
+    connection: 'ONLINE' | 'OFFLINE' | 'UNKNOWN';
+    lastUpdate?: string | null;
+    hasSensorData?: boolean;
 }
 
 export interface Zone {
@@ -32,7 +37,7 @@ export interface Zone {
     name: string;
     type: 'Outdoor' | 'Indoor' | 'Greenhouse' | 'Orchard';
     config: ZoneConfig;
-    sensors: ZoneSensors;
+    sensors: ZoneSensors | null;
     status: ZoneStatus;
 }
 

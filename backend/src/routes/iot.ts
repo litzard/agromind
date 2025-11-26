@@ -17,8 +17,8 @@ router.post('/sensor-data', async (req, res) => {
       return res.status(404).json({ error: 'Zona no encontrada' });
     }
 
-    const currentStatus = zone.status as any;
-    const currentSensors = zone.sensors as any;
+    const currentStatus = (zone.status as any) || {};
+    const currentSensors = (zone.sensors as any) || {};
 
     // Actualizar sensores con datos del ESP32
     const updatedSensors = {
@@ -36,7 +36,8 @@ router.post('/sensor-data', async (req, res) => {
       ...currentStatus,
       connection: 'ONLINE',
       lastUpdate: new Date().toISOString(),
-      pump: sensors.pumpStatus ? 'ON' : (currentStatus.pump === 'LOCKED' ? 'LOCKED' : 'OFF')
+      pump: sensors.pumpStatus ? 'ON' : (currentStatus.pump === 'LOCKED' ? 'LOCKED' : 'OFF'),
+      hasSensorData: true
     };
 
     // Verificar si el tanque está muy bajo

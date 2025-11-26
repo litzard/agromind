@@ -1,5 +1,7 @@
 import { API_CONFIG } from '../constants/api';
 
+const getZoneDetailUrl = (zoneId: number) => `${API_CONFIG.BASE_URL}/zones/detail/${zoneId}`;
+
 export interface ESP32SensorData {
     temperature: number;
     soilMoisture: number;
@@ -53,7 +55,7 @@ class ESP32Service {
      */
     private async fetchSensorData(zoneId: number) {
         try {
-            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${zoneId}`);
+            const response = await fetch(getZoneDetailUrl(zoneId));
             
             if (!response.ok) {
                 console.error(`❌ Error fetching zone ${zoneId}: ${response.status}`);
@@ -78,7 +80,7 @@ class ESP32Service {
      */
     async getConnectionStatus(zoneId: number): Promise<ESP32ConnectionStatus> {
         try {
-            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${zoneId}`);
+            const response = await fetch(getZoneDetailUrl(zoneId));
             
             if (!response.ok) {
                 return {
@@ -89,8 +91,9 @@ class ESP32Service {
 
             const data = await response.json();
             
+            const connectionState = (data.status?.connection || '').toUpperCase();
             return {
-                connected: data.status?.connection === 'ONLINE',
+                connected: connectionState === 'ONLINE',
                 lastUpdate: data.status?.lastUpdate || 'Nunca'
             };
         } catch (error) {

@@ -122,22 +122,29 @@ export const Header = () => {
     const generateNotifications = (zones: any[]) => {
         zones.forEach((zone: any) => {
             const prevZone = prevZonesState?.find((z: any) => z.id === zone.id);
+            const sensors = zone.sensors || {};
+            const prevSensors = prevZone?.sensors || {};
+
+            const tankLevel = typeof sensors.tankLevel === 'number' ? sensors.tankLevel : null;
+            const prevTankLevel = typeof prevSensors.tankLevel === 'number' ? prevSensors.tankLevel : null;
+            const soilMoisture = typeof sensors.soilMoisture === 'number' ? sensors.soilMoisture : null;
+            const prevSoilMoisture = typeof prevSensors.soilMoisture === 'number' ? prevSensors.soilMoisture : null;
 
             // Tanque bajo (< 20%)
-            if (zone.sensors.tankLevel < 20 && zone.sensors.tankLevel > 5) {
-                if (!prevZone || prevZone.sensors.tankLevel >= 20) {
+            if (tankLevel !== null && tankLevel < 20 && tankLevel > 5) {
+                if (prevTankLevel === null || prevTankLevel >= 20) {
                     addNotification(
                         'warning',
                         'Tanque Bajo',
-                        `El tanque de ${zone.name} está al ${Math.round(zone.sensors.tankLevel)}%`,
+                        `El tanque de ${zone.name} está al ${Math.round(tankLevel)}%`,
                         zone.id
                     );
                 }
             }
 
             // Tanque crítico (< 5%)
-            if (zone.sensors.tankLevel <= 5) {
-                if (!prevZone || prevZone.sensors.tankLevel > 5) {
+            if (tankLevel !== null && tankLevel <= 5) {
+                if (prevTankLevel === null || prevTankLevel > 5) {
                     addNotification(
                         'error',
                         'Tanque Vacío',
@@ -188,19 +195,22 @@ export const Header = () => {
             }
 
             // Humedad muy baja
-            if (zone.sensors.soilMoisture < 20) {
-                if (!prevZone || prevZone.sensors.soilMoisture >= 20) {
+            if (soilMoisture !== null && soilMoisture < 20) {
+                if (prevSoilMoisture === null || prevSoilMoisture >= 20) {
                     addNotification(
                         'warning',
                         'Humedad Baja',
-                        `${zone.name}: Humedad del suelo al ${Math.round(zone.sensors.soilMoisture)}%`,
+                        `${zone.name}: Humedad del suelo al ${Math.round(soilMoisture)}%`,
                         zone.id
                     );
                 }
             }
 
+            const connectionState = (zone.status.connection || '').toUpperCase();
+            const prevConnectionState = (prevZone?.status.connection || '').toUpperCase();
+
             // Conexión perdida
-            if (zone.status.connection === 'OFFLINE' && prevZone?.status.connection === 'ONLINE') {
+            if (connectionState === 'OFFLINE' && prevConnectionState === 'ONLINE') {
                 addNotification(
                     'error',
                     'Conexión Perdida',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
@@ -8,11 +8,31 @@ import { Button } from '../components/Button';
 import { TutorialOverlay } from '../components/TutorialOverlay';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../styles/theme';
 import { API_CONFIG } from '../constants/api';
+import { ActionModal, ActionModalButton } from '../components/ActionModal';
 
 export default function AddZoneScreen() {
     const [name, setName] = useState('');
     const [type, setType] = useState<'Outdoor' | 'Indoor' | 'Greenhouse'>('Outdoor');
     const [loading, setLoading] = useState(false);
+    const [espConfig, setEspConfig] = useState({
+        ssid: '',
+        password: '',
+        serverUrl: (() => {
+            try {
+                const parsed = new URL(API_CONFIG.BASE_URL);
+                return `${parsed.protocol}//${parsed.host}`;
+            } catch (error) {
+                return API_CONFIG.BASE_URL.replace(/\/?api$/, '');
+            }
+        })()
+    });
+    const [modalConfig, setModalConfig] = useState({
+        visible: false,
+        title: '',
+        message: '',
+        icon: 'information-circle' as keyof typeof Ionicons.glyphMap,
+        buttons: [] as ActionModalButton[]
+    });
     const { user } = useAuth();
     const { isActive, nextStep, setCurrentScreen } = useTutorial();
     const router = useRouter();
@@ -20,29 +40,63 @@ export default function AddZoneScreen() {
     useFocusEffect(
         React.useCallback(() => {
             setCurrentScreen('add-zone');
-        }, [])
+        }, [setCurrentScreen])
     );
+
+    const closeModal = () => setModalConfig(prev => ({ ...prev, visible: false }));
+
+    const showModal = (config: {
+        title: string;
+        message: string;
+        icon?: keyof typeof Ionicons.glyphMap;
+        buttons: ActionModalButton[];
+    }) => {
+        setModalConfig({
+            visible: true,
+            title: config.title,
+            message: config.message,
+            icon: config.icon ?? 'information-circle',
+            buttons: config.buttons,
+        });
+    };
 
     const handleCreateZone = async () => {
         if (!name.trim()) {
-            Alert.alert('Error', 'Por favor ingresa un nombre para la zona');
+            showModal({
+                title: 'Falta el nombre',
+                message: 'Ingresa un nombre descriptivo para identificar tu zona.',
+                buttons: [{ label: 'Entendido', variant: 'primary', onPress: closeModal }]
+            });
+            return;
+        }
+
+        if (!espConfig.ssid.trim() || !espConfig.password.trim()) {
+            showModal({
+                title: 'Configura tu WiFi',
+                message: 'El ESP32 necesita el nombre y la contraseña de la red para poder conectarse.',
+                icon: 'wifi',
+                buttons: [{ label: 'Completar', variant: 'primary', onPress: closeModal }]
+            });
             return;
         }
 
         setLoading(true);
         try {
             const defaultSensors = {
-                soilMoisture: 50,
-                temperature: 25,
-                humidity: 60,
-                lightLevel: 80,
-                tankLevel: 100
+                soilMoisture: null,
+                temperature: null,
+                humidity: null,
+                lightLevel: null,
+                tankLevel: null,
+                waterLevel: null
             };
 
             const defaultStatus = {
                 pump: 'OFF',
-                connection: 'ONLINE',
-                lastWatered: 'Nunca'
+                connection: 'OFFLINE',
+                lastWatered: 'Nunca',
+                lastUpdate: null,
+                hasSensorData: false
             };
 
             const defaultConfig = {
@@ -72,31 +126,29 @@ export default function AddZoneScreen() {
 
                 // Si el tutorial está activo, avanzar al siguiente paso
                 if (isActive) {
-                    nextStep(); // Avanza automáticamente
-                    router.back();
-                } else {
-                    Alert.alert(
-                        '✅ Zona Creada',
-                        '¿Deseas conectar un dispositivo ESP32 ahora?',
-                        [
-                            { 
-                                text: 'Ahora No', 
-                                onPress: () => router.back(),
-                                style: 'cancel'
-                            },
-                            { 
-                                text: 'Conectar ESP32', 
-                                onPress: () => router.replace(`/connect-esp32?zoneId=${newZoneId}`)
-                            }
-                        ]
-                    );
+                    nextStep();
                 }
+
+                router.replace({
+                    pathname: '/connect-esp32',
+                    params: {
+                        zoneId: newZoneId.toString(),
+                        ssid: espConfig.ssid,
+                        password: espConfig.password,
+                        serverUrl: espConfig.serverUrl,
+                    }
+                });
             } else {
                 throw new Error('Error al crear la zona');
             }
         } catch (error) {
             console.error('Create zone error:', error);
-            Alert.alert('Error', 'No se pudo crear la zona');
+            showModal({
+                title: 'No se pudo crear la zona',
+                message: 'Revisa tu conexión o intenta de nuevo en unos minutos.',
+                icon: 'alert-circle',
+                buttons: [{ label: 'Cerrar', onPress: closeModal, variant: 'primary' }]
+            });
         } finally {
             setLoading(false);
         }
@@ -190,8 +242,53 @@ export default function AddZoneScreen() {
                     </Text>
                 </View>
 
+                <View style={styles.formSection}>
+                    <Text style={styles.label}>Configura tu ESP32</Text>
+                    <View style={styles.espCard}>
+                        <Text style={styles.espDescription}>
+                            Estos datos se usarán para conectar el ESP32 inmediatamente después de crear la zona.
+                        </Text>
+
+                        <View style={styles.inputContainer}>
+                            <Ionicons name="wifi" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="SSID de tu red"
+                                value={espConfig.ssid}
+                                onChangeText={(text) => setEspConfig(prev => ({ ...prev, ssid: text }))}
+                                placeholderTextColor={Colors.gray[400]}
+                            />
+                        </View>
+
+                        <View style={[styles.inputContainer, { marginTop: Spacing.sm }]}>
+                            <Ionicons name="lock-closed" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Contraseña WiFi"
+                                secureTextEntry
+                                value={espConfig.password}
+                                onChangeText={(text) => setEspConfig(prev => ({ ...prev, password: text }))}
+                                placeholderTextColor={Colors.gray[400]}
+                            />
+                        </View>
+
+                        <View style={[styles.inputContainer, { marginTop: Spacing.sm }]}>
+                            <Ionicons name="server" size={20} color={Colors.gray[400]} style={styles.inputIcon} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="http://192.168.1.66:5000"
+                                value={espConfig.serverUrl}
+                                onChangeText={(text) => setEspConfig(prev => ({ ...prev, serverUrl: text }))}
+                                placeholderTextColor={Colors.gray[400]}
+                                autoCapitalize="none"
+                                keyboardType="url"
+                            />
+                        </View>
+                    </View>
+                </View>
+
                 <Button
-                    title="Crear Zona"
+                    title="Crear zona y conectar ESP32"
                     onPress={handleCreateZone}
                     loading={loading}
                     style={styles.submitButton}
@@ -200,6 +297,14 @@ export default function AddZoneScreen() {
                 />
             </ScrollView>
             <TutorialOverlay />
+            <ActionModal
+                visible={modalConfig.visible}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                icon={modalConfig.icon}
+                buttons={modalConfig.buttons}
+                onClose={closeModal}
+            />
         </KeyboardAvoidingView>
     );
 }
@@ -306,6 +411,20 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.sm,
         color: Colors.blue[800],
         lineHeight: 20,
+    },
+    espCard: {
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: Colors.gray[200],
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        gap: Spacing.sm,
+    },
+    espDescription: {
+        color: Colors.gray[600],
+        fontSize: FontSizes.sm,
+        lineHeight: 20,
+        marginBottom: Spacing.sm,
     },
     submitButton: {
         marginTop: Spacing.sm,

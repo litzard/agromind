@@ -20,11 +20,11 @@ const char* ssid = "Medina 2.0";           // Cambiar por tu SSID
 const char* password = "Amorcito";   // Cambiar por tu contraseña
 
 // ==================== CONFIGURACIÓN API ====================
-const char* serverUrl = "http://192.168.1.66:3000/api/iot/sensor-data";  // Cambiar por la IP de tu servidor
+const char* serverUrl = "http://192.168.1.66:5000/api/iot/sensor-data";  // Cambiar por la IP de tu servidor
 const int zoneId = 1;  // ID de la zona que este ESP32 controla
 
 // ==================== PINES ====================
-#define RELAY_PIN 5          // D5 - Control de Bomba
+#define RELAY_PIN 25         // D25 - Control de Bomba (evita pin de arranque)
 #define DHT_PIN 4            // D4 - DHT11
 #define TRIG_PIN 18          // D18 - Ultrasónico Trigger
 #define ECHO_PIN 19          // D19 - Ultrasónico Echo

@@ -53,6 +53,14 @@ export default function DashboardScreen() {
     const hasAnimated = React.useRef(false);
 
     const activeZone = zones.find(z => z.id.toString() === activeZoneId);
+    const activeZoneConnection = activeZone ? (activeZone.status.connection || 'UNKNOWN').toUpperCase() : 'UNKNOWN';
+    const isActiveZoneOnline = activeZoneConnection === 'ONLINE';
+    const activeZoneSensors = (activeZone?.sensors ?? {}) as Record<string, number | null | undefined>;
+    const hasSensorData = Boolean(activeZone?.status?.hasSensorData || activeZone?.status?.lastUpdate);
+    const soilMoistureValue = typeof activeZoneSensors.soilMoisture === 'number' ? activeZoneSensors.soilMoisture : null;
+    const temperatureValue = typeof activeZoneSensors.temperature === 'number' ? activeZoneSensors.temperature : null;
+    const tankLevelValue = typeof activeZoneSensors.tankLevel === 'number' ? activeZoneSensors.tankLevel : null;
+    const lightLevelValue = typeof activeZoneSensors.lightLevel === 'number' ? activeZoneSensors.lightLevel : null;
 
     useFocusEffect(
         React.useCallback(() => {
@@ -96,7 +104,7 @@ export default function DashboardScreen() {
     useEffect(() => {
         if (!loading && zones.length > 0 && !hasAnimated.current) {
             hasAnimated.current = true;
-            
+
             // Animación principal de fade-in
             Animated.timing(fadeAnim, {
                 toValue: 1,
@@ -140,12 +148,12 @@ export default function DashboardScreen() {
         if (!activeZone) return;
 
         console.log(`📡 Iniciando polling para zona ${activeZone.id}`);
-        
+
         esp32Service.startPolling(activeZone.id, (sensorData) => {
             // Actualizar zona con datos en tiempo real
-            setZones(prev => prev.map(z => 
-                z.id === activeZone.id 
-                    ? { ...z, sensors: { ...z.sensors, ...sensorData } }
+            setZones(prev => prev.map(z =>
+                z.id === activeZone.id
+                    ? { ...z, sensors: { ...(z.sensors || {}), ...sensorData } }
                     : z
             ));
         }, 5000); // Polling cada 5 segundos
@@ -174,7 +182,7 @@ export default function DashboardScreen() {
                     console.warn('No se pudo obtener ubicación, usando default (CDMX):', locError.message);
                     location = { lat: 19.4326, lon: -99.1332 }; // Fallback a CDMX
                 }
-                
+
                 const weatherData = await getLocalWeather(location.lat, location.lon);
                 setWeather(weatherData);
             } catch (error) {
@@ -254,8 +262,14 @@ export default function DashboardScreen() {
 
         const currentZoneId = activeZone.id;
 
+        if (!hasSensorData) {
+            Alert.alert('Esperando datos', 'Aún no recibimos lecturas del ESP32 de esta zona. Conéctalo y envía datos antes de activar el riego.');
+            return;
+        }
+
         // Verificar que el tanque tenga agua
-        if (activeZone.sensors.tankLevel <= 5) {
+        const availableTankLevel = typeof tankLevelValue === 'number' ? tankLevelValue : 0;
+        if (availableTankLevel <= 5) {
             Alert.alert('Tanque Vacío', 'No hay suficiente agua en el tanque para regar.');
             return;
         }
@@ -327,17 +341,18 @@ export default function DashboardScreen() {
         }
     };
 
-    const CircularProgress = ({ value, threshold }: { value: number, threshold: number }) => {
+    const CircularProgress = ({ value, threshold, hasData }: { value: number | null, threshold: number, hasData: boolean }) => {
         const size = 160;
         const strokeWidth = 10;
         const radius = (size - strokeWidth) / 2;
         const circumference = 2 * Math.PI * radius;
-        const progress = (value / 100) * circumference;
+        const numericValue = typeof value === 'number' ? value : 0;
+        const progress = (numericValue / 100) * circumference;
         const offset = circumference - progress;
-        
-        const isLow = value < threshold;
-        const gradientId = isLow ? 'gradientRed' : 'gradientGreen';
-        
+
+        const isLow = hasData && numericValue < threshold;
+        const gradientId = !hasData ? 'gradientGray' : isLow ? 'gradientRed' : 'gradientGreen';
+
         return (
             <View style={styles.progressContainer}>
                 <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>
@@ -349,6 +364,10 @@ export default function DashboardScreen() {
                         <LinearGradient id="gradientRed" x1="0%" y1="0%" x2="100%" y2="100%">
                             <Stop offset="0%" stopColor="#EF4444" stopOpacity="1" />
                             <Stop offset="100%" stopColor="#FCA5A5" stopOpacity="1" />
+                        </LinearGradient>
+                        <LinearGradient id="gradientGray" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <Stop offset="0%" stopColor="#CBD5F5" stopOpacity="1" />
+                            <Stop offset="100%" stopColor="#E2E8F0" stopOpacity="1" />
                         </LinearGradient>
                     </Defs>
                     {/* Background circle */}
@@ -374,15 +393,72 @@ export default function DashboardScreen() {
                     />
                 </Svg>
                 <View style={styles.progressContent}>
-                    <Text style={[styles.progressValue, { color: colors.text }]}>{Math.round(value)}<Text style={[styles.progressUnit, { color: colors.textSecondary }]}>%</Text></Text>
-                    <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>ACTUAL</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: isLow ? Colors.red[50] : Colors.emerald[50] }]}>
-                        <Text style={[styles.statusText, { color: isLow ? Colors.red[500] : Colors.emerald[500] }]}>
-                            {isLow ? 'CRÍTICO' : 'ÓPTIMO'}
+                    <Text style={[styles.progressValue, { color: colors.text }]}>
+                        {hasData ? Math.round(numericValue) : '--'}
+                        {hasData && <Text style={[styles.progressUnit, { color: colors.textSecondary }]}>%</Text>}
+                    </Text>
+                    <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>
+                        {hasData ? 'ACTUAL' : 'SIN DATOS'}
+                    </Text>
+                    <View style={[
+                        styles.statusBadge,
+                        { backgroundColor: !hasData ? Colors.gray[100] : isLow ? Colors.red[50] : Colors.emerald[50] }
+                    ]}>
+                        <Text style={[
+                            styles.statusText,
+                            { color: !hasData ? Colors.gray[500] : isLow ? Colors.red[500] : Colors.emerald[500] }
+                        ]}>
+                            {hasData ? (isLow ? 'CRÍTICO' : 'ÓPTIMO') : 'Esperando...'}
                         </Text>
                     </View>
                 </View>
             </View>
+        );
+    };
+
+    const handleDeleteZone = (zoneId: number) => {
+        const zone = zones.find(z => z.id === zoneId);
+        const zoneName = zone?.name || 'esta zona';
+
+        Alert.alert(
+            'Eliminar Zona',
+            `¿Deseas eliminar ${zoneName}? Esta acción no se puede deshacer.`,
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Eliminar',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            const response = await fetch(`${API_CONFIG.BASE_URL}/zones/${zoneId}`, {
+                                method: 'DELETE'
+                            });
+
+                            if (!response.ok) {
+                                throw new Error('No se pudo eliminar la zona');
+                            }
+
+                            setZones(prev => {
+                                const updated = prev.filter(z => z.id !== zoneId);
+
+                                if (!updated.length) {
+                                    setActiveZoneId('');
+                                    setShowZoneSelector(false);
+                                } else if (activeZoneId === zoneId.toString()) {
+                                    setActiveZoneId(updated[0].id.toString());
+                                }
+
+                                return updated;
+                            });
+
+                            Alert.alert('Zona eliminada', `${zoneName} fue eliminada correctamente.`);
+                        } catch (error) {
+                            console.error('Error deleting zone:', error);
+                            Alert.alert('Error', 'No se pudo eliminar la zona. Intenta nuevamente.');
+                        }
+                    }
+                }
+            ]
         );
     };
 
@@ -403,7 +479,7 @@ export default function DashboardScreen() {
                     <Text style={styles.emptyText}>No tienes zonas configuradas</Text>
                     <Text style={styles.emptySubtext}>Crea tu primera zona para comenzar</Text>
                     <Link href="/add-zone" asChild>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             style={styles.addZoneButton}
                             // @ts-ignore
                             nativeID="add-zone-button"
@@ -451,17 +527,17 @@ export default function DashboardScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.zoneStatusRow}>
-                            <View style={[styles.typeTag, { backgroundColor: Colors.emerald[50] }]}>
+                            <View style={styles.zoneStatusRow}>
+                                <View style={[styles.typeTag, { backgroundColor: Colors.emerald[50] }]}>
                                 <Ionicons name={activeZone.type === 'Indoor' ? 'home' : 'leaf'} size={14} color={Colors.emerald[600]} />
                                 <Text style={styles.typeText}>{activeZone.type === 'Indoor' ? 'Interior' : 'Exterior'}</Text>
                             </View>
-                            <View style={styles.connectionStatus}>
-                                <View style={[styles.statusDot, { backgroundColor: activeZone.status.connection === 'ONLINE' ? Colors.emerald[500] : Colors.red[500] }]} />
-                                <Text style={[styles.connectionText, { color: colors.textSecondary }]}>
-                                    ESP32 {activeZone.status.connection === 'ONLINE' ? 'ONLINE' : 'OFFLINE'}
-                                </Text>
-                            </View>
+                                <View style={styles.connectionStatus}>
+                                    <View style={[styles.statusDot, { backgroundColor: isActiveZoneOnline ? Colors.emerald[500] : Colors.gray[300] }]} />
+                                    <Text style={[styles.connectionText, { color: isActiveZoneOnline ? colors.text : colors.textSecondary }]}>
+                                        ESP32 {isActiveZoneOnline ? 'ONLINE' : 'OFFLINE'}
+                                    </Text>
+                                </View>
                         </View>
                     </View>
 
@@ -484,13 +560,14 @@ export default function DashboardScreen() {
 
                         {/* Moisture Circle - Centered */}
                         <View style={styles.moistureSection}>
-                            <View 
+                            <View
                                 // @ts-ignore
                                 nativeID="moisture-circle"
                             >
-                                <CircularProgress 
-                                    value={activeZone.sensors.soilMoisture} 
+                                <CircularProgress
+                                    value={soilMoistureValue}
                                     threshold={activeZone.config.moistureThreshold}
+                                    hasData={hasSensorData}
                                 />
                             </View>
                         </View>
@@ -498,12 +575,12 @@ export default function DashboardScreen() {
                         {/* Secondary sensors - minimal style */}
                         <View style={styles.sensorsRowMinimal}>
                             {/* Temperature */}
-                            <Animated.View 
+                            <Animated.View
                                 style={[
                                     styles.sensorMinimal,
                                     {
                                         opacity: sensorAnims[0],
-                                        transform: [{ 
+                                        transform: [{
                                             translateY: sensorAnims[0].interpolate({
                                                 inputRange: [0, 1],
                                                 outputRange: [20, 0]
@@ -513,17 +590,19 @@ export default function DashboardScreen() {
                                 ]}
                             >
                                 <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>TEMPERATURA</Text>
-                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.temperature}°</Text>
-                                <Ionicons name="thermometer" size={24} color={Colors.orange[500]} />
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>
+                                    {hasSensorData && temperatureValue !== null ? `${Math.round(temperatureValue)}°` : '--'}
+                                </Text>
+                                <Ionicons name="thermometer" size={24} color={hasSensorData ? Colors.orange[500] : Colors.gray[300]} />
                             </Animated.View>
 
                             {/* Tank Level */}
-                            <Animated.View 
+                            <Animated.View
                                 style={[
                                     styles.sensorMinimal,
                                     {
                                         opacity: sensorAnims[1],
-                                        transform: [{ 
+                                        transform: [{
                                             translateY: sensorAnims[1].interpolate({
                                                 inputRange: [0, 1],
                                                 outputRange: [20, 0]
@@ -533,17 +612,27 @@ export default function DashboardScreen() {
                                 ]}
                             >
                                 <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>TANQUE</Text>
-                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.tankLevel.toFixed(0)}%</Text>
-                                <Ionicons name="water" size={24} color={activeZone.sensors.tankLevel < 20 ? Colors.red[500] : Colors.blue[500]} />
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>
+                                    {hasSensorData && tankLevelValue !== null ? `${tankLevelValue.toFixed(0)}%` : '--'}
+                                </Text>
+                                <Ionicons
+                                    name="water"
+                                    size={24}
+                                    color={
+                                        hasSensorData && tankLevelValue !== null
+                                            ? (tankLevelValue < 20 ? Colors.red[500] : Colors.blue[500])
+                                            : Colors.gray[300]
+                                    }
+                                />
                             </Animated.View>
 
                             {/* Light Level */}
-                            <Animated.View 
+                            <Animated.View
                                 style={[
                                     styles.sensorMinimal,
                                     {
                                         opacity: sensorAnims[2],
-                                        transform: [{ 
+                                        transform: [{
                                             translateY: sensorAnims[2].interpolate({
                                                 inputRange: [0, 1],
                                                 outputRange: [20, 0]
@@ -553,20 +642,32 @@ export default function DashboardScreen() {
                                 ]}
                             >
                                 <Text style={[styles.sensorMinimalLabel, { color: colors.textSecondary }]}>LUZ</Text>
-                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>{activeZone.sensors.lightLevel}%</Text>
-                                <Ionicons name="sunny" size={24} color={Colors.yellow[500]} />
+                                <Text style={[styles.sensorMinimalValue, { color: colors.text }]}>
+                                    {hasSensorData && lightLevelValue !== null ? `${Math.round(lightLevelValue)}%` : '--'}
+                                </Text>
+                                <Ionicons name="sunny" size={24} color={hasSensorData ? Colors.yellow[500] : Colors.gray[300]} />
                             </Animated.View>
                         </View>
 
                         {/* Pump status - minimal */}
                         <View style={styles.pumpStatusMinimal}>
-                            <View style={[styles.pumpDot, { 
-                                backgroundColor: activeZone.status.pump === 'ON' ? Colors.emerald[500] : 
-                                                activeZone.status.pump === 'LOCKED' ? Colors.red[500] : Colors.gray[300] 
+                            <View style={[styles.pumpDot, {
+                                backgroundColor: !hasSensorData
+                                    ? Colors.gray[300]
+                                    : activeZone.status.pump === 'ON'
+                                        ? Colors.emerald[500]
+                                        : activeZone.status.pump === 'LOCKED'
+                                            ? Colors.red[500]
+                                            : Colors.gray[300]
                             }]} />
                             <Text style={[styles.pumpTextMinimal, { color: colors.textSecondary }]}>
-                                {activeZone.status.pump === 'ON' ? 'Bomba activa' : 
-                                 activeZone.status.pump === 'LOCKED' ? 'Bomba bloqueada' : 'Bomba inactiva'}
+                                {!hasSensorData
+                                    ? 'Esperando datos del ESP32'
+                                    : activeZone.status.pump === 'ON'
+                                        ? 'Bomba activa'
+                                        : activeZone.status.pump === 'LOCKED'
+                                            ? 'Bomba bloqueada'
+                                            : 'Bomba inactiva'}
                             </Text>
                         </View>
 
@@ -580,8 +681,8 @@ export default function DashboardScreen() {
                             >
                                 <ExpoLinearGradient
                                     colors={
-                                        activeZone.status.pump === 'ON' 
-                                            ? ['#10B981', '#059669'] 
+                                        activeZone.status.pump === 'ON'
+                                            ? ['#10B981', '#059669']
                                             : ['#1E293B', '#0F172A']
                                     }
                                     start={{ x: 0, y: 0 }}
@@ -632,10 +733,10 @@ export default function DashboardScreen() {
                                             styles.weatherIconContainer,
                                             { transform: [{ scale: weatherIconScale }] }
                                         ]}>
-                                            <Ionicons 
-                                                name={weather.condition === 'Rain' ? 'rainy' : 'sunny'} 
-                                                size={48} 
-                                                color="#fff" 
+                                            <Ionicons
+                                                name={weather.condition === 'Rain' ? 'rainy' : 'sunny'}
+                                                size={48}
+                                                color="#fff"
                                             />
                                         </Animated.View>
                                     </View>
@@ -674,25 +775,32 @@ export default function DashboardScreen() {
                     <View style={styles.modalContent}>
                         <Text style={styles.modalTitle}>Seleccionar Zona</Text>
                         {zones.map(zone => (
-                            <TouchableOpacity
-                                key={zone.id}
-                                style={[
-                                    styles.modalItem,
-                                    activeZoneId === zone.id.toString() && styles.modalItemActive
-                                ]}
-                                onPress={() => {
-                                    setActiveZoneId(zone.id.toString());
-                                    setShowZoneSelector(false);
-                                }}
-                            >
-                                <Text style={[
-                                    styles.modalItemText,
-                                    activeZoneId === zone.id.toString() && styles.modalItemTextActive
-                                ]}>{zone.name}</Text>
-                                {activeZoneId === zone.id.toString() && (
-                                    <Ionicons name="checkmark" size={20} color={Colors.emerald[600]} />
-                                )}
-                            </TouchableOpacity>
+                            <View key={zone.id} style={styles.modalItemWrapper}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.modalItem,
+                                        activeZoneId === zone.id.toString() && styles.modalItemActive
+                                    ]}
+                                    onPress={() => {
+                                        setActiveZoneId(zone.id.toString());
+                                        setShowZoneSelector(false);
+                                    }}
+                                >
+                                    <Text style={[
+                                        styles.modalItemText,
+                                        activeZoneId === zone.id.toString() && styles.modalItemTextActive
+                                    ]}>{zone.name}</Text>
+                                    {activeZoneId === zone.id.toString() && (
+                                        <Ionicons name="checkmark" size={20} color={Colors.emerald[600]} />
+                                    )}
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={styles.modalDeleteButton}
+                                    onPress={() => handleDeleteZone(zone.id)}
+                                >
+                                    <Ionicons name="close" size={16} color={Colors.gray[500]} />
+                                </TouchableOpacity>
+                            </View>
                         ))}
                         <Link href="/add-zone" asChild>
                             <TouchableOpacity style={styles.modalAddItem}>
@@ -1129,6 +1237,9 @@ const styles = StyleSheet.create({
         color: Colors.gray[900],
         marginBottom: Spacing.md,
     },
+    modalItemWrapper: {
+        position: 'relative',
+    },
     modalItem: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1149,6 +1260,17 @@ const styles = StyleSheet.create({
     modalItemTextActive: {
         color: Colors.emerald[700],
         fontWeight: '600',
+    },
+    modalDeleteButton: {
+        position: 'absolute',
+        right: 0,
+        top: 0,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: Colors.gray[100],
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     modalAddItem: {
         flexDirection: 'row',

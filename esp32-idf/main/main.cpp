@@ -272,11 +272,14 @@ static float read_water_level(void) {
 }
 
 // ==================== CONTROL DE BOMBA ====================
+// NOTA: Muchos módulos de relé son "active-low" (se activan con 0)
+// Si tu relé se enciende cuando debería estar apagado, cambia la lógica aquí
 
 static void set_pump_state(bool state) {
     pump_state = state;
-    gpio_set_level(RELAY_PIN, state ? 1 : 0);
-    ESP_LOGI(TAG, "Bomba %s", state ? "ENCENDIDA" : "APAGADA");
+    // Relé active-low: 0 = encendido, 1 = apagado
+    gpio_set_level(RELAY_PIN, state ? 0 : 1);
+    ESP_LOGI(TAG, "Bomba %s (GPIO=%d)", state ? "ENCENDIDA" : "APAGADA", state ? 0 : 1);
 }
 
 static void update_configuration_from_commands(cJSON *commands) {

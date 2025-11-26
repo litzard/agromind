@@ -66,6 +66,8 @@ router.post('/sensor-data', async (req, res) => {
     // (cuando el usuario presiona el botón desde la app)
     const manualPumpCommand = currentStatus.manualPumpCommand;
     
+    console.log(`🔧 Comando manual pendiente para zona ${zoneId}:`, manualPumpCommand);
+    
     const response: any = {
       success: true,
       commands: {
@@ -78,6 +80,8 @@ router.post('/sensor-data', async (req, res) => {
       }
     };
 
+    console.log(`📤 Enviando a ESP32:`, response.commands);
+
     // Limpiar comando manual después de enviarlo
     if (manualPumpCommand !== undefined) {
       await zone.update({ 
@@ -86,6 +90,7 @@ router.post('/sensor-data', async (req, res) => {
           manualPumpCommand: undefined 
         } 
       });
+      console.log(`✅ Comando manual limpiado para zona ${zoneId}`);
     }
 
     res.json(response);

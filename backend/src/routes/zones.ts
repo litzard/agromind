@@ -117,15 +117,19 @@ router.post('/:id/pump', async (req: Request, res: Response) => {
 
     // Guardar como comando manual pendiente para que el ESP32 lo reciba
     // El ESP32 ejecutará el comando y reportará el estado real
+    const newManualCommand = action === 'ON';
+    
     await zone.update({ 
       status: { 
         ...status, 
-        manualPumpCommand: action === 'ON',
+        manualPumpCommand: newManualCommand,
         lastWatered: action === 'OFF' && status.pump === 'ON' 
           ? new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
           : status.lastWatered
       } 
     });
+
+    console.log(`💧 Comando de bomba guardado - Zona ${req.params.id}: manualPumpCommand=${newManualCommand}`);
 
     res.json({ success: true, pump: action, pending: true });
   } catch (error: any) {

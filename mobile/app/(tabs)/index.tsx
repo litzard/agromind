@@ -359,21 +359,40 @@ export default function DashboardScreen() {
 
             setManualWatering(true);
 
+            // Actualizar estado local inmediatamente para feedback visual
+            setZones(prev => prev.map(z =>
+                z.id === currentZoneId
+                    ? { ...z, status: { ...z.status, pump: 'ON' as const } }
+                    : z
+            ));
+
             const turnedOn = await esp32Service.togglePump(currentZoneId, true);
             if (!turnedOn) {
+                // Revertir estado si falló
+                setZones(prev => prev.map(z =>
+                    z.id === currentZoneId
+                        ? { ...z, status: { ...z.status, pump: 'OFF' as const } }
+                        : z
+                ));
                 throw new Error('No se pudo activar la bomba');
             }
 
-            await loadZones();
+            // Duración del riego manual (usar configuración de la zona o 10 segundos por defecto)
+            const wateringDuration = (activeZone.config.wateringDuration || 10) * 1000;
 
             setTimeout(async () => {
                 try {
                     await esp32Service.togglePump(currentZoneId, false);
-                    await loadZones();
+                    // Actualizar estado local inmediatamente
+                    setZones(prev => prev.map(z =>
+                        z.id === currentZoneId
+                            ? { ...z, status: { ...z.status, pump: 'OFF' as const } }
+                            : z
+                    ));
                 } finally {
                     setManualWatering(false);
                 }
-            }, 5000);
+            }, wateringDuration);
         } catch (error) {
             Alert.alert('Error', 'No se pudo iniciar el riego manual');
             setManualWatering(false);
@@ -550,7 +569,13 @@ export default function DashboardScreen() {
     const isAutoModeEnabled = Boolean(activeZone.config.autoMode);
     const pumpState = activeZone.status.pump;
     const pumpLocked = pumpState === 'LOCKED';
-    const pumpRunning = pumpState === 'ON';
+    const pumpRunning = pumpState === 'ON' || manualWatering;
+    
+    // Detectar si el modo auto debería estar regando (humedad < umbral)
+    const autoModeNeedsWatering = isAutoModeEnabled && 
+        hasSensorData && 
+        soilMoistureValue !== null && 
+        soilMoistureValue < activeZone.config.moistureThreshold;
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -698,20 +723,33 @@ export default function DashboardScreen() {
                             <View style={[styles.pumpDot, {
                                 backgroundColor: !hasSensorData
                                     ? Colors.gray[300]
-                                    : activeZone.status.pump === 'ON'
+                                    : pumpRunning
                                         ? Colors.emerald[500]
-                                        : activeZone.status.pump === 'LOCKED'
+                                        : pumpLocked
                                             ? Colors.red[500]
-                                            : Colors.gray[300]
+                                            : autoModeNeedsWatering
+                                                ? Colors.yellow[500]
+                                                : Colors.gray[300]
                             }]} />
-                            <Text style={[styles.pumpTextMinimal, { color: colors.textSecondary }]}>
+                            <Text style={[styles.pumpTextMinimal, { 
+                                color: pumpRunning
+                                    ? Colors.emerald[600] 
+                                    : autoModeNeedsWatering
+                                        ? Colors.yellow[600]
+                                        : colors.textSecondary,
+                                fontWeight: pumpRunning ? '700' : '600'
+                            }]}>
                                 {!hasSensorData
                                     ? 'Esperando datos del ESP32'
-                                    : activeZone.status.pump === 'ON'
-                                        ? 'Bomba activa'
-                                        : activeZone.status.pump === 'LOCKED'
-                                            ? 'Bomba bloqueada'
-                                            : 'Bomba inactiva'}
+          : pumpRunning
+                                        ? '💧 BOMBA ACTIVA - Regando'
+                                        : pumpLocked
+                                            ? '🔒 Bomba bloqueada (tanque bajo)'
+                                            : autoModeNeedsWatering
+                                                ? '⚡ Auto-riego activándose...'
+                                                : isAutoModeEnabled
+                                                    ? `🌱 Modo auto (umbral: ${activeZone.config.moistureThreshold}%)`
+                                                    : 'Bomba inactiva'}
                             </Text>
                         </View>
 

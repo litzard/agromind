@@ -1,7 +1,17 @@
 import { Router, Request, Response } from 'express';
 import Zone from '../models/Zone';
+import Event from '../models/Event';
 
 const router = Router();
+
+// Helper para crear eventos
+const createEvent = async (userId: number, zoneId: number, type: string, description: string, metadata?: object) => {
+  try {
+    await Event.create({ userId, zoneId, type, description, metadata });
+  } catch (error) {
+    console.error('Error creating event:', error);
+  }
+};
 
 // Obtener una zona específica (por ID)
 router.get('/detail/:id', async (req: Request, res: Response) => {
@@ -53,6 +63,18 @@ router.post('/', async (req: Request, res: Response) => {
     };
 
     const zone = await Zone.create(payload);
+
+    // Registrar evento de creación de zona
+    if (zone.userId) {
+      await createEvent(
+        zone.userId,
+        zone.id,
+        'ZONA_CREADA',
+        `Zona "${zone.name}" creada`,
+        { type: zone.type }
+      );
+    }
+
     res.status(201).json(zone);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -66,7 +88,39 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (!zone) {
       return res.status(404).json({ error: 'Zona no encontrada' });
     }
+
+    const oldConfig = zone.config as any;
+    const newConfig = req.body.config;
+
     await zone.update(req.body);
+
+    // Registrar eventos de cambios de configuración importantes
+    if (zone.userId && newConfig) {
+      // Cambio de modo automático
+      if (oldConfig?.autoMode !== newConfig.autoMode) {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'CONFIG_CAMBIO',
+          newConfig.autoMode 
+            ? `Modo automático activado en ${zone.name}`
+            : `Modo automático desactivado en ${zone.name}`,
+          { autoMode: newConfig.autoMode }
+        );
+      }
+      
+      // Cambio de umbral
+      if (oldConfig?.moistureThreshold !== newConfig.moistureThreshold) {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'CONFIG_CAMBIO',
+          `Umbral de humedad cambiado a ${newConfig.moistureThreshold}% en ${zone.name}`,
+          { moistureThreshold: newConfig.moistureThreshold }
+        );
+      }
+    }
+
     res.json(zone);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -116,7 +170,6 @@ router.post('/:id/pump', async (req: Request, res: Response) => {
     }
 
     // Guardar como comando manual pendiente para que el ESP32 lo reciba
-    // El ESP32 ejecutará el comando y reportará el estado real
     const newManualCommand = action === 'ON';
     
     await zone.update({ 
@@ -129,7 +182,18 @@ router.post('/:id/pump', async (req: Request, res: Response) => {
       } 
     });
 
-    console.log(`💧 Comando de bomba guardado - Zona ${req.params.id}: manualPumpCommand=${newManualCommand}`);
+    // Registrar evento de riego manual
+    if (zone.userId) {
+      await createEvent(
+        zone.userId,
+        zone.id,
+        action === 'ON' ? 'RIEGO_MANUAL_INICIO' : 'RIEGO_MANUAL_FIN',
+        action === 'ON' 
+          ? `Riego manual iniciado en ${zone.name}`
+          : `Riego manual detenido en ${zone.name}`,
+        { action, manual: true }
+      );
+    }
 
     res.json({ success: true, pump: action, pending: true });
   } catch (error: any) {

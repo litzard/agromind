@@ -5,6 +5,7 @@ import sequelize from './config/database';
 import authRoutes from './routes/auth';
 import zoneRoutes from './routes/zones';
 import iotRoutes from './routes/iot';
+import eventRoutes from './routes/events';
 
 dotenv.config();
 
@@ -45,6 +46,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/zones', zoneRoutes);
 app.use('/api/iot', iotRoutes);
+app.use('/api/events', eventRoutes);
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);

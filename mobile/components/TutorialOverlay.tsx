@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -6,15 +6,15 @@ import {
     TouchableOpacity,
     Animated,
     Dimensions,
-    Modal,
     Platform,
+    PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTutorial } from '../context/TutorialContext';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../styles/theme';
 
-const { width, height } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface TutorialOverlayProps {
     targetPosition?: { x: number; y: number; width: number; height: number };
@@ -23,13 +23,19 @@ interface TutorialOverlayProps {
 export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition }) => {
     const { isActive, currentStep, steps, nextStep, skipTutorial, currentScreen } = useTutorial();
     const router = useRouter();
+    
+    // Animaciones
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(0.8)).current;
     const pulseAnim = useRef(new Animated.Value(1)).current;
+    const positionY = useRef(new Animated.Value(80)).current; // Posición inicial desde abajo
+    
+    // Estado para minimizar/expandir
+    const [isMinimized, setIsMinimized] = useState(false);
+    const minimizeAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
         if (isActive) {
-            // Animación de entrada
             Animated.parallel([
                 Animated.timing(fadeAnim, {
                     toValue: 1,
@@ -44,7 +50,6 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition
                 }),
             ]).start();
 
-            // Animación de pulso continuo si hay target
             if (targetPosition) {
                 Animated.loop(
                     Animated.sequence([
@@ -64,6 +69,15 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition
         }
     }, [isActive, currentStep, targetPosition]);
 
+    const toggleMinimize = () => {
+        Animated.spring(minimizeAnim, {
+            toValue: isMinimized ? 1 : 0,
+            friction: 8,
+            useNativeDriver: true,
+        }).start();
+        setIsMinimized(!isMinimized);
+    };
+
     if (!isActive || !steps[currentStep]) return null;
 
     const currentStepData = steps[currentStep];
@@ -72,17 +86,27 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition
     if (currentStepData.screen !== currentScreen) return null;
 
     const handleNext = () => {
-        // Si el paso requiere navegación, navegar antes de continuar
         if (currentStepData.nextScreen) {
             router.push(currentStepData.nextScreen as any);
         }
         nextStep();
     };
 
+    const getStepIcon = () => {
+        switch (currentStepData.actionType) {
+            case 'tap-button': return 'hand-left';
+            case 'navigate': return 'arrow-forward';
+            case 'create-zone': return 'checkmark-circle';
+            default: return 'information-circle';
+        }
+    };
+
+    const progress = ((currentStep + 1) / steps.length) * 100;
+
     return (
         <>
-            {/* Highlight del elemento target (sin overlay oscuro) */}
-            {targetPosition && (
+            {/* Highlight del elemento target */}
+            {targetPosition && !isMinimized && (
                 <View style={styles.highlightContainer} pointerEvents="none">
                     <Animated.View
                         style={[
@@ -99,93 +123,119 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition
                 </View>
             )}
 
-            {/* Barra flotante en la parte inferior */}
+            {/* Overlay flotante */}
             <Animated.View
                 style={[
-                    styles.tutorialBar,
+                    styles.floatingOverlay,
                     {
                         opacity: fadeAnim,
-                        transform: [{ 
-                            translateY: fadeAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [100, 0]
-                            })
-                        }],
+                        transform: [
+                            { scale: scaleAnim },
+                            { 
+                                translateY: minimizeAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [200, 0]
+                                })
+                            }
+                        ],
                     },
                 ]}
             >
-                {/* Header compacto */}
-                <View style={styles.barHeader}>
-                    <View style={styles.barIconContainer}>
-                        <Ionicons 
-                            name={
-                                currentStepData.actionType === 'tap-button' ? 'hand-left' :
-                                currentStepData.actionType === 'navigate' ? 'arrow-forward' :
-                                currentStepData.actionType === 'create-zone' ? 'checkmark-circle' :
-                                'information-circle'
-                            } 
-                            size={24} 
-                            color={Colors.emerald[600]} 
-                        />
-                    </View>
-                    <View style={styles.barContent}>
-                        <Text style={styles.barTitle}>{currentStepData.title}</Text>
-                        <Text style={styles.barDescription} numberOfLines={2}>{currentStepData.description}</Text>
-                    </View>
-                    <TouchableOpacity
-                        style={styles.closeButton}
-                        onPress={skipTutorial}
+                {/* Vista minimizada */}
+                {isMinimized ? (
+                    <TouchableOpacity 
+                        style={styles.minimizedView}
+                        onPress={toggleMinimize}
+                        activeOpacity={0.9}
                     >
-                        <Ionicons name="close" size={20} color={Colors.gray[400]} />
-                    </TouchableOpacity>
-                </View>
-
-                {/* Footer con botones */}
-                <View style={styles.barFooter}>
-                        {/* Indicadores de progreso */}
-                        <View style={styles.indicators}>
-                            {steps.map((_, index) => (
-                                <View
-                                    key={index}
-                                    style={[
-                                        styles.indicator,
-                                        index === currentStep && styles.indicatorActive,
-                                    ]}
-                                />
-                            ))}
+                        <View style={styles.minimizedContent}>
+                            <View style={styles.minimizedIconBadge}>
+                                <Ionicons name="school" size={18} color="#fff" />
+                            </View>
+                            <Text style={styles.minimizedText}>Tutorial</Text>
+                            <Text style={styles.minimizedStep}>{currentStep + 1}/{steps.length}</Text>
                         </View>
-
-                        {/* Botón siguiente */}
-                        {currentStepData.waitForAction ? (
-                            <View style={styles.waitingContainer}>
-                                <View style={styles.waitingBadge}>
-                                    <Ionicons name="hourglass-outline" size={16} color={Colors.orange[500]} />
-                                    <Text style={styles.waitingText}>Completa la acción para continuar</Text>
+                        <Ionicons name="chevron-up" size={20} color={Colors.gray[400]} />
+                    </TouchableOpacity>
+                ) : (
+                    /* Vista expandida */
+                    <View style={styles.expandedView}>
+                        {/* Header */}
+                        <View style={styles.header}>
+                            <View style={styles.headerLeft}>
+                                <View style={styles.stepBadge}>
+                                    <Text style={styles.stepBadgeText}>{currentStep + 1}</Text>
                                 </View>
-                                <TouchableOpacity
-                                    style={styles.skipWaitButton}
-                                    onPress={() => skipTutorial()}
+                                <Text style={styles.headerTitle}>Tutorial</Text>
+                            </View>
+                            <View style={styles.headerActions}>
+                                <TouchableOpacity 
+                                    style={styles.iconButton}
+                                    onPress={toggleMinimize}
                                 >
-                                    <Text style={styles.skipWaitText}>Saltar Tutorial</Text>
+                                    <Ionicons name="chevron-down" size={20} color={Colors.gray[500]} />
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={styles.iconButton}
+                                    onPress={skipTutorial}
+                                >
+                                    <Ionicons name="close" size={20} color={Colors.gray[500]} />
                                 </TouchableOpacity>
                             </View>
-                        ) : (
-                            <TouchableOpacity
-                                style={styles.nextButton}
-                                onPress={handleNext}
-                            >
-                                <Text style={styles.nextText}>
-                                    {currentStep === steps.length - 1 ? '¡Finalizar!' : 'Siguiente'}
-                                </Text>
-                                <Ionicons name="arrow-forward" size={20} color="#fff" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
+                        </View>
 
-                {/* Step counter */}
-                <Text style={styles.stepCounter}>
-                    Paso {currentStep + 1} de {steps.length}
-                </Text>
+                        {/* Barra de progreso */}
+                        <View style={styles.progressContainer}>
+                            <View style={[styles.progressBar, { width: `${progress}%` }]} />
+                        </View>
+
+                        {/* Contenido */}
+                        <View style={styles.content}>
+                            <View style={styles.contentIcon}>
+                                <Ionicons name={getStepIcon()} size={28} color={Colors.emerald[600]} />
+                            </View>
+                            <View style={styles.contentText}>
+                                <Text style={styles.contentTitle}>{currentStepData.title}</Text>
+                                <Text style={styles.contentDescription}>{currentStepData.description}</Text>
+                            </View>
+                        </View>
+
+                        {/* Acciones */}
+                        <View style={styles.actions}>
+                            {currentStepData.waitForAction ? (
+                                <View style={styles.waitingContainer}>
+                                    <View style={styles.waitingBadge}>
+                                        <Ionicons name="hourglass-outline" size={16} color={Colors.orange[500]} />
+                                        <Text style={styles.waitingText}>Realiza la acción indicada</Text>
+                                    </View>
+                                </View>
+                            ) : (
+                                <TouchableOpacity
+                                    style={styles.nextButton}
+                                    onPress={handleNext}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={styles.nextText}>
+                                        {currentStep === steps.length - 1 ? '¡Finalizar!' : 'Siguiente'}
+                                    </Text>
+                                    <Ionicons 
+                                        name={currentStep === steps.length - 1 ? 'checkmark' : 'arrow-forward'} 
+                                        size={18} 
+                                        color="#fff" 
+                                    />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        {/* Skip */}
+                        <TouchableOpacity 
+                            style={styles.skipButton}
+                            onPress={skipTutorial}
+                        >
+                            <Text style={styles.skipText}>Saltar tutorial</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
             </Animated.View>
         </>
     );
@@ -194,94 +244,155 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ targetPosition
 const styles = StyleSheet.create({
     highlightContainer: {
         ...StyleSheet.absoluteFillObject,
-        zIndex: 999,
+        zIndex: 998,
     },
     highlight: {
         position: 'absolute',
         borderRadius: BorderRadius.xl,
         borderWidth: 3,
         borderColor: Colors.emerald[400],
-        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        backgroundColor: 'rgba(16, 185, 129, 0.15)',
         shadowColor: Colors.emerald[400],
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.8,
         shadowRadius: 15,
         elevation: 10,
     },
-    tutorialBar: {
+    floatingOverlay: {
         position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        bottom: Platform.OS === 'ios' ? 100 : 80,
+        left: Spacing.md,
+        right: Spacing.md,
         backgroundColor: '#fff',
-        borderTopLeftRadius: BorderRadius.xxl,
-        borderTopRightRadius: BorderRadius.xxl,
-        paddingBottom: Platform.OS === 'ios' ? 34 : Spacing.lg,
+        borderRadius: BorderRadius.xxl,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-        elevation: 20,
-        zIndex: 1000,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.2,
+        shadowRadius: 24,
+        elevation: 15,
+        zIndex: 999,
     },
-    barHeader: {
+    // Vista minimizada
+    minimizedView: {
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        padding: Spacing.lg,
-        gap: Spacing.md,
-        borderBottomWidth: 1,
-        borderBottomColor: Colors.gray[100],
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.lg,
     },
-    barIconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+    minimizedContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    minimizedIconBadge: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: Colors.emerald[600],
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    minimizedText: {
+        fontSize: FontSizes.base,
+        fontWeight: '700',
+        color: Colors.gray[800],
+    },
+    minimizedStep: {
+        fontSize: FontSizes.sm,
+        fontWeight: '600',
+        color: Colors.emerald[600],
+        backgroundColor: Colors.emerald[50],
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 2,
+        borderRadius: BorderRadius.full,
+    },
+    // Vista expandida
+    expandedView: {
+        padding: Spacing.lg,
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: Spacing.sm,
+    },
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    stepBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: Colors.emerald[600],
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    stepBadgeText: {
+        color: '#fff',
+        fontSize: FontSizes.sm,
+        fontWeight: '700',
+    },
+    headerTitle: {
+        fontSize: FontSizes.base,
+        fontWeight: '700',
+        color: Colors.gray[800],
+    },
+    headerActions: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+    },
+    iconButton: {
+        padding: Spacing.xs,
+    },
+    progressContainer: {
+        height: 4,
+        backgroundColor: Colors.gray[100],
+        borderRadius: 2,
+        marginBottom: Spacing.lg,
+        overflow: 'hidden',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: Colors.emerald[500],
+        borderRadius: 2,
+    },
+    content: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        marginBottom: Spacing.lg,
+    },
+    contentIcon: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
         backgroundColor: Colors.emerald[50],
         justifyContent: 'center',
         alignItems: 'center',
     },
-    barContent: {
+    contentText: {
         flex: 1,
     },
-    barTitle: {
-        fontSize: FontSizes.base,
+    contentTitle: {
+        fontSize: FontSizes.lg,
         fontWeight: '700',
         color: Colors.gray[900],
         marginBottom: 4,
     },
-    barDescription: {
+    contentDescription: {
         fontSize: FontSizes.sm,
         color: Colors.gray[600],
-        lineHeight: 18,
+        lineHeight: 20,
     },
-    closeButton: {
-        padding: Spacing.xs,
-    },
-    barFooter: {
-        padding: Spacing.lg,
-        paddingTop: Spacing.md,
-        gap: Spacing.md,
-    },
-    indicators: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        gap: 4,
+    actions: {
         marginBottom: Spacing.sm,
-    },
-    indicator: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: Colors.gray[200],
-    },
-    indicatorActive: {
-        backgroundColor: Colors.emerald[600],
-        width: 20,
     },
     nextButton: {
         backgroundColor: Colors.emerald[600],
         borderRadius: BorderRadius.lg,
-        padding: Spacing.md,
+        paddingVertical: Spacing.md,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
@@ -290,18 +401,23 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
-        elevation: 6,
+        elevation: 4,
+    },
+    nextText: {
+        color: '#fff',
+        fontSize: FontSizes.base,
+        fontWeight: '700',
     },
     waitingContainer: {
-        gap: Spacing.md,
+        alignItems: 'center',
     },
     waitingBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
         gap: Spacing.sm,
         backgroundColor: Colors.orange[50],
-        padding: Spacing.md,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
         borderRadius: BorderRadius.lg,
         borderWidth: 1,
         borderColor: Colors.orange[200],
@@ -311,25 +427,13 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: Colors.orange[700],
     },
-    skipWaitButton: {
-        padding: Spacing.sm,
+    skipButton: {
         alignItems: 'center',
+        paddingVertical: Spacing.xs,
     },
-    skipWaitText: {
+    skipText: {
         fontSize: FontSizes.sm,
-        fontWeight: '600',
-        color: Colors.gray[500],
-        textDecorationLine: 'underline',
-    },
-    nextText: {
-        color: '#fff',
-        fontSize: FontSizes.base,
-        fontWeight: '700',
-    },
-    stepCounter: {
-        textAlign: 'center',
-        fontSize: 11,
         color: Colors.gray[400],
-        fontWeight: '600',
+        textDecorationLine: 'underline',
     },
 });

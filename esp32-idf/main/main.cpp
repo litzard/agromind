@@ -54,8 +54,13 @@ static const char *TAG = "AGROMIND";
 #define TANK_HEIGHT_CM 17.0f
 #define SENSOR_TO_BOTTOM_DISTANCE_CM 17.0f
 
-#define SOIL_MOISTURE_DRY_ADC 3200.0f   // aire (ajusta con tu lectura en seco)
-#define SOIL_MOISTURE_WET_ADC 700.0f    // saturado (ajusta con tu lectura en agua)
+// Calibración del sensor de humedad del suelo
+#define SOIL_MOISTURE_DRY_ADC 3200.0f   // Valor ADC en aire (seco)
+#define SOIL_MOISTURE_WET_ADC 700.0f    // Valor ADC en agua (saturado)
+
+// Calibración del LDR - ajusta estos valores según tus lecturas
+#define LDR_DARK_ADC 500.0f      // Valor ADC cuando está oscuro (ajusta según tu lectura)
+#define LDR_BRIGHT_ADC 3500.0f   // Valor ADC cuando tiene mucha luz (ajusta según tu lectura)
 
 // ==================== VARIABLES GLOBALES ====================
 static adc_oneshot_unit_handle_t adc1_handle;
@@ -225,10 +230,13 @@ static float read_light_level(void) {
         adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv);
     }
 
-    float percentage = map_value((float)adc_raw, 0.0f, 4095.0f, 0.0f, 100.0f);
+    // Mapeo usando valores calibrados para respuesta más gradual
+    // LDR_DARK_ADC (oscuro) -> 0%
+    // LDR_BRIGHT_ADC (brillante) -> 100%
+    float percentage = map_value((float)adc_raw, LDR_DARK_ADC, LDR_BRIGHT_ADC, 0.0f, 100.0f);
     percentage = constrain_value(percentage, 0.0f, 100.0f);
 
-    ESP_LOGI(TAG, "Luz - Raw: %d | Voltaje: %d mV | %.1f%%",
+    ESP_LOGI(TAG, "🔆 LDR - Raw: %d | Voltaje: %d mV | %.1f%%",
              adc_raw, voltage_mv, percentage);
 
     return percentage;
@@ -278,8 +286,12 @@ static float read_water_level(void) {
 static void set_pump_state(bool state) {
     pump_state = state;
     // Relé active-low: 0 = encendido, 1 = apagado
-    gpio_set_level(RELAY_PIN, state ? 0 : 1);
-    ESP_LOGI(TAG, "Bomba %s (GPIO=%d)", state ? "ENCENDIDA" : "APAGADA", state ? 0 : 1);
+    int gpio_level = state ? 0 : 1;
+    gpio_set_level(RELAY_PIN, gpio_level);
+    ESP_LOGI(TAG, "🔧 BOMBA %s -> GPIO%d = %d", 
+             state ? "ENCENDIDA" : "APAGADA", 
+             RELAY_PIN, 
+             gpio_level);
 }
 
 static void update_configuration_from_commands(cJSON *commands) {
@@ -348,7 +360,12 @@ static void apply_auto_mode_logic(void) {
         return;
     }
 
+    ESP_LOGI(TAG, "🌱 Auto-mode check: moisture=%.1f%% threshold=%.1f%% tank=%.1f%% pump=%s",
+             last_soil_moisture, configured_moisture_threshold, last_tank_level,
+             pump_state ? "ON" : "OFF");
+
     if (last_tank_level <= 0.0f && last_soil_moisture <= 0.0f) {
+        ESP_LOGW(TAG, "⚠️ Sin lecturas de sensores todavía");
         return;  // aún no hay lecturas recientes
     }
 
@@ -383,6 +400,7 @@ static void apply_auto_mode_logic(void) {
     // Si la bomba está encendida pero NO hay auto-riego activo,
     // es un estado manual - no interferir
     if (pump_state) {
+        ESP_LOGI(TAG, "Bomba ya encendida (modo manual), no interferir");
         return;
     }
 
@@ -392,7 +410,10 @@ static void apply_auto_mode_logic(void) {
         uint32_t duration_ms = configured_watering_duration * 1000U;
         auto_watering_deadline = now + pdMS_TO_TICKS(duration_ms);
         set_pump_state(true);
-        ESP_LOGI(TAG, "Auto-riego iniciado: humedad %.1f%% < %.1f%%",
+        ESP_LOGI(TAG, "🚿 AUTO-RIEGO INICIADO: humedad %.1f%% < umbral %.1f%%",
+                 last_soil_moisture, configured_moisture_threshold);
+    } else {
+        ESP_LOGI(TAG, "✓ Humedad OK (%.1f%% >= %.1f%%), no regar",
                  last_soil_moisture, configured_moisture_threshold);
     }
 }
@@ -405,12 +426,13 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 
     switch (evt->event_id) {
         case HTTP_EVENT_ON_DATA:
-            if (!esp_http_client_is_chunked_response(evt->client)) {
-                if ((response_len + evt->data_len) < (int)sizeof(response_buffer)) {
-                    memcpy(response_buffer + response_len, evt->data, evt->data_len);
-                    response_len += evt->data_len;
-                    response_buffer[response_len] = '\0';
-                }
+            // Procesar datos tanto para respuestas normales como chunked
+            if ((response_len + evt->data_len) < (int)sizeof(response_buffer)) {
+                memcpy(response_buffer + response_len, evt->data, evt->data_len);
+                response_len += evt->data_len;
+                response_buffer[response_len] = '\0';
+            } else {
+                ESP_LOGW(TAG, "Buffer de respuesta lleno, datos truncados");
             }
             break;
         case HTTP_EVENT_ON_FINISH:
@@ -428,6 +450,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
                         cJSON *tank_locked = cJSON_GetObjectItem(commands, "tankLocked");
                         bool is_tank_locked = tank_locked && cJSON_IsTrue(tank_locked);
                         
+                        ESP_LOGI(TAG, "📥 Comandos recibidos - tankLocked:%s", is_tank_locked ? "true" : "false");
+                        
                         if (is_tank_locked) {
                             // Tanque bloqueado - apagar bomba si está encendida
                             if (pump_state) {
@@ -438,16 +462,25 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
                         } else {
                             // Solo procesar comando de bomba si viene explícito (comando manual)
                             cJSON *pump_state_obj = cJSON_GetObjectItem(commands, "pumpState");
-                            if (pump_state_obj && !cJSON_IsNull(pump_state_obj) && cJSON_IsBool(pump_state_obj)) {
+                            
+                            if (pump_state_obj == NULL) {
+                                ESP_LOGI(TAG, "📥 pumpState: NULL (auto-mode decide)");
+                            } else if (cJSON_IsNull(pump_state_obj)) {
+                                ESP_LOGI(TAG, "📥 pumpState: null (auto-mode decide)");
+                            } else if (cJSON_IsBool(pump_state_obj)) {
                                 bool requested_state = cJSON_IsTrue(pump_state_obj);
+                                ESP_LOGI(TAG, "📥 pumpState: %s (comando manual)", requested_state ? "true" : "false");
                                 if (requested_state != pump_state) {
                                     set_pump_state(requested_state);
                                     // Si es comando manual, cancelar auto-watering
                                     auto_watering_active = false;
-                                    ESP_LOGI(TAG, "Comando manual recibido: bomba %s", requested_state ? "ON" : "OFF");
+                                    ESP_LOGI(TAG, "✅ Comando manual ejecutado: bomba %s", requested_state ? "ON" : "OFF");
+                                } else {
+                                    ESP_LOGI(TAG, "ℹ️ Bomba ya está %s, no cambiar", pump_state ? "ON" : "OFF");
                                 }
+                            } else {
+                                ESP_LOGW(TAG, "📥 pumpState: tipo desconocido");
                             }
-                            // Si pumpState es null, el firmware mantiene control (auto-mode decide)
                         }
                     }
 
@@ -619,10 +652,26 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // IMPORTANTE: Poner el GPIO del relé en HIGH ANTES de configurarlo
+    // para evitar que el relé se active durante el boot (relé active-low)
+    gpio_reset_pin(RELAY_PIN);
+    gpio_set_level(RELAY_PIN, 1);
+
+    // Configurar RELAY_PIN por separado con pull-up para mantenerlo HIGH durante boot
+    gpio_config_t relay_conf = {};
+    relay_conf.intr_type = GPIO_INTR_DISABLE;
+    relay_conf.mode = GPIO_MODE_OUTPUT;
+    relay_conf.pin_bit_mask = (1ULL << RELAY_PIN);
+    relay_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    relay_conf.pull_up_en = GPIO_PULLUP_ENABLE;  // Pull-up para mantener HIGH
+    ESP_ERROR_CHECK(gpio_config(&relay_conf));
+    gpio_set_level(RELAY_PIN, 1);  // Asegurar que está en HIGH
+
+    // Configurar TRIG_PIN
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << RELAY_PIN) | (1ULL << TRIG_PIN);
+    io_conf.pin_bit_mask = (1ULL << TRIG_PIN);
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&io_conf));

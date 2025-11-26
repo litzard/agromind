@@ -1,22 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     View, 
     Text, 
     StyleSheet, 
     TouchableOpacity, 
     Platform, 
-    Modal, 
     Animated,
     ScrollView,
-    Alert
+    Alert,
+    Dimensions,
+    TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../styles/theme';
 import { useRouter } from 'expo-router';
 import { API_CONFIG } from '../constants/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface Notification {
     id: string;
@@ -37,11 +41,68 @@ export const Header = () => {
     const [showNotifications, setShowNotifications] = useState(false);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [prevZonesState, setPrevZonesState] = useState<any>(null);
+    
+    // Animaciones
+    const notificationAnim = useRef(new Animated.Value(0)).current;
+    const profileAnim = useRef(new Animated.Value(0)).current;
+    const backdropAnim = useRef(new Animated.Value(0)).current;
+
+    // Animación de notificaciones
+    useEffect(() => {
+        if (showNotifications) {
+            Animated.parallel([
+                Animated.spring(notificationAnim, {
+                    toValue: 1,
+                    friction: 8,
+                    tension: 65,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(backdropAnim, {
+                    toValue: 1,
+                    duration: 200,
+                    useNativeDriver: true,
+                }),
+            ]).start();
+        } else {
+            Animated.parallel([
+                Animated.timing(notificationAnim, {
+                    toValue: 0,
+                    duration: 150,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(backdropAnim, {
+                    toValue: 0,
+                    duration: 150,
+                    useNativeDriver: true,
+                }),
+            ]).start();
+        }
+    }, [showNotifications]);
+
+    // Animación de perfil
+    useEffect(() => {
+        if (showProfileMenu) {
+            Animated.spring(profileAnim, {
+                toValue: 1,
+                friction: 8,
+                tension: 65,
+                useNativeDriver: true,
+            }).start();
+        } else {
+            Animated.timing(profileAnim, {
+                toValue: 0,
+                duration: 150,
+                useNativeDriver: true,
+            }).start();
+        }
+    }, [showProfileMenu]);
 
     // Cargar notificaciones guardadas al inicio
     useEffect(() => {
-        loadNotifications();
-    }, []);
+        if (user?.id) {
+            loadNotifications();
+        }
+    }, [user?.id]);
 
     // Verificar zonas cada 5 segundos para generar notificaciones
     useEffect(() => {
@@ -66,15 +127,20 @@ export const Header = () => {
         return () => clearInterval(interval);
     }, [user?.id, prevZonesState]);
 
+    // Key de almacenamiento único por usuario
+    const getNotificationsKey = () => `notifications_${user?.id || 'guest'}`;
+
     const loadNotifications = async () => {
         try {
-            const stored = await AsyncStorage.getItem('notifications');
+            const stored = await AsyncStorage.getItem(getNotificationsKey());
             if (stored) {
                 const parsed = JSON.parse(stored);
                 // Mantener solo las últimas 24 horas
                 const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
                 const recent = parsed.filter((n: Notification) => n.timestamp > dayAgo);
                 setNotifications(recent);
+            } else {
+                setNotifications([]);
             }
         } catch (error) {
             console.error('Error loading notifications:', error);
@@ -83,7 +149,7 @@ export const Header = () => {
 
     const saveNotifications = async (notifs: Notification[]) => {
         try {
-            await AsyncStorage.setItem('notifications', JSON.stringify(notifs));
+            await AsyncStorage.setItem(getNotificationsKey(), JSON.stringify(notifs));
         } catch (error) {
             console.error('Error saving notifications:', error);
         }
@@ -246,9 +312,9 @@ export const Header = () => {
                 {
                     text: 'Limpiar',
                     style: 'destructive',
-                    onPress: () => {
+                    onPress: async () => {
                         setNotifications([]);
-                        saveNotifications([]);
+                        await AsyncStorage.removeItem(getNotificationsKey());
                     },
                 },
             ]
@@ -293,218 +359,287 @@ export const Header = () => {
 
     const unreadCount = notifications.filter(n => !n.read).length;
 
+    const closeAll = () => {
+        setShowNotifications(false);
+        setShowProfileMenu(false);
+    };
+
+    const getNotificationGradient = (type: Notification['type']): [string, string] => {
+        switch (type) {
+            case 'error': return [Colors.red[500], Colors.red[600]];
+            case 'warning': return [Colors.orange[400], Colors.orange[500]];
+            case 'success': return [Colors.emerald[500], Colors.emerald[600]];
+            default: return [Colors.blue[400], Colors.blue[500]];
+        }
+    };
+
     return (
-        <View style={[styles.container, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-            <View style={styles.leftSection}>
-                <View style={styles.logoContainer}>
-                    <Ionicons name="leaf" size={24} color={colors.primary} />
+        <>
+            <View style={[styles.container, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+                <View style={styles.leftSection}>
+                    <LinearGradient
+                        colors={[Colors.emerald[500], Colors.emerald[600]]}
+                        style={styles.logoContainer}
+                    >
+                        <Ionicons name="leaf" size={20} color="#fff" />
+                    </LinearGradient>
+                    <Text style={[styles.appName, { color: colors.text }]}>AgroMind</Text>
                 </View>
-                <Text style={[styles.appName, { color: colors.text }]}>AgroMind</Text>
+
+                <View style={styles.rightSection}>
+                    {/* Botón de notificaciones */}
+                    <TouchableOpacity 
+                        style={[styles.iconButton, { backgroundColor: colors.background }]}
+                        onPress={() => {
+                            setShowProfileMenu(false);
+                            setShowNotifications(!showNotifications);
+                        }}
+                        activeOpacity={0.7}
+                    >
+                        {unreadCount > 0 && (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                            </View>
+                        )}
+                        <Ionicons name="notifications-outline" size={22} color={colors.text} />
+                    </TouchableOpacity>
+
+                    {/* Botón de perfil */}
+                    <TouchableOpacity 
+                        style={styles.profileButton}
+                        onPress={() => {
+                            setShowNotifications(false);
+                            setShowProfileMenu(!showProfileMenu);
+                        }}
+                        activeOpacity={0.8}
+                    >
+                        <LinearGradient
+                            colors={[Colors.emerald[500], Colors.emerald[700]]}
+                            style={styles.avatar}
+                        >
+                            <Text style={styles.avatarText}>
+                                {user?.name ? getInitials(user.name) : 'U'}
+                            </Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
             </View>
 
-            <View style={styles.rightSection}>
-                {/* Botón de notificaciones */}
-                <TouchableOpacity 
-                    style={styles.iconButton}
-                    onPress={() => setShowNotifications(true)}
-                >
-                    {unreadCount > 0 && (
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{unreadCount}</Text>
-                        </View>
-                    )}
-                    <Ionicons name="notifications-outline" size={24} color={colors.text} />
-                </TouchableOpacity>
-
-                {/* Botón de perfil */}
-                <TouchableOpacity 
-                    style={styles.profileButton}
-                    onPress={() => setShowProfileMenu(true)}
-                >
-                    <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-                        <Text style={styles.avatarText}>
-                            {user?.name ? getInitials(user.name) : 'U'}
-                        </Text>
-                    </View>
-                </TouchableOpacity>
-            </View>
+            {/* Backdrop */}
+            {(showNotifications || showProfileMenu) && (
+                <TouchableWithoutFeedback onPress={closeAll}>
+                    <Animated.View 
+                        style={[
+                            styles.backdrop,
+                            { opacity: backdropAnim }
+                        ]} 
+                    />
+                </TouchableWithoutFeedback>
+            )}
 
             {/* Dropdown de Notificaciones */}
             {showNotifications && (
-                <>
-                    <TouchableOpacity
-                        style={styles.notificationBackdrop}
-                        activeOpacity={1}
-                        onPress={() => setShowNotifications(false)}
-                    />
-                    <View style={[styles.notificationDropdown, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                        <View style={[styles.notificationHeader, { borderBottomColor: colors.border }]}>
-                            <Text style={[styles.notificationTitle, { color: colors.text }]}>Notificaciones</Text>
-                            <View style={styles.notificationHeaderActions}>
-                                {notifications.length > 0 && unreadCount > 0 && (
-                                    <TouchableOpacity 
-                                        onPress={markAllAsRead}
-                                        style={styles.markReadButton}
-                                    >
-                                        <Text style={[styles.markReadText, { color: colors.primary }]}>Marcar todas</Text>
-                                    </TouchableOpacity>
-                                )}
-                                <TouchableOpacity onPress={() => setShowNotifications(false)}>
-                                    <Ionicons name="close" size={22} color={colors.text} />
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-
-                        <ScrollView style={styles.notificationList} showsVerticalScrollIndicator={false}>
-                            {notifications.length === 0 ? (
-                                <View style={styles.emptyNotifications}>
-                                    <Ionicons name="notifications-off-outline" size={48} color={colors.border} />
-                                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No hay notificaciones</Text>
-                                </View>
-                            ) : (
-                                notifications.map(notification => (
-                                    <TouchableOpacity
-                                        key={notification.id}
-                                        style={[
-                                            styles.notificationItem,
-                                            { borderBottomColor: colors.border },
-                                            !notification.read && styles.notificationUnread
-                                        ]}
-                                        activeOpacity={0.7}
-                                        onPress={() => markAsRead(notification.id)}
-                                    >
-                                        <View style={[
-                                            styles.notificationIcon,
-                                            {
-                                                backgroundColor:
-                                                    notification.type === 'error' ? Colors.red[50] :
-                                                    notification.type === 'warning' ? Colors.orange[50] :
-                                                    notification.type === 'success' ? Colors.emerald[50] :
-                                                    Colors.blue[50]
-                                            }
-                                        ]}>
-                                            <Ionicons
-                                                name={
-                                                    notification.type === 'error' ? 'alert-circle' :
-                                                    notification.type === 'warning' ? 'warning' :
-                                                    notification.type === 'success' ? 'checkmark-circle' :
-                                                    'information-circle'
-                                                }
-                                                size={20}
-                                                color={
-                                                    notification.type === 'error' ? Colors.red[500] :
-                                                    notification.type === 'warning' ? Colors.orange[500] :
-                                                    notification.type === 'success' ? Colors.emerald[600] :
-                                                    Colors.blue[500]
-                                                }
-                                            />
-                                        </View>
-                                        <View style={styles.notificationContent}>
-                                            <Text style={[styles.notificationItemTitle, { color: colors.text }]}>{notification.title}</Text>
-                                            <Text style={[styles.notificationMessage, { color: colors.textSecondary }]}>{notification.message}</Text>
-                                            <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>{getTimeAgo(notification.timestamp)}</Text>
-                                        </View>
-                                        {!notification.read && <View style={styles.unreadDot} />}
-                                    </TouchableOpacity>
-                                ))
-                            )}
-                        </ScrollView>
-
-                        {notifications.length > 0 && (
-                            <TouchableOpacity
-                                style={[styles.clearButton, { borderTopColor: colors.border }]}
-                                onPress={clearNotifications}
-                            >
-                                <Ionicons name="trash-outline" size={16} color={Colors.red[500]} />
-                                <Text style={[styles.clearButtonText, { color: Colors.red[500] }]}>Limpiar todas</Text>
+                <Animated.View 
+                    style={[
+                        styles.notificationDropdown,
+                        { backgroundColor: colors.card },
+                        {
+                            opacity: notificationAnim,
+                            transform: [
+                                { 
+                                    translateY: notificationAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [-10, 0]
+                                    })
+                                },
+                                {
+                                    scale: notificationAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0.95, 1]
+                                    })
+                                }
+                            ]
+                        }
+                    ]}
+                >
+                    {/* Header minimalista */}
+                    <View style={styles.dropdownHeader}>
+                        <Text style={[styles.dropdownTitle, { color: colors.text }]}>Notificaciones</Text>
+                        {notifications.length > 0 && unreadCount > 0 && (
+                            <TouchableOpacity onPress={markAllAsRead}>
+                                <Text style={styles.markAllText}>Marcar leídas</Text>
                             </TouchableOpacity>
                         )}
                     </View>
-                </>
+
+                    <ScrollView 
+                        style={styles.notificationList} 
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={notifications.length === 0 ? styles.emptyContainer : undefined}
+                    >
+                        {notifications.length === 0 ? (
+                            <View style={styles.emptyState}>
+                                <View style={[styles.emptyIcon, { backgroundColor: colors.background }]}>
+                                    <Ionicons name="notifications-off-outline" size={32} color={Colors.gray[300]} />
+                                </View>
+                                <Text style={[styles.emptyTitle, { color: colors.text }]}>Sin notificaciones</Text>
+                                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                                    Te notificaremos sobre eventos importantes
+                                </Text>
+                            </View>
+                        ) : (
+                            notifications.map((notification, index) => (
+                                <TouchableOpacity
+                                    key={notification.id}
+                                    style={[
+                                        styles.notificationItem,
+                                        !notification.read && styles.notificationUnread,
+                                        index === notifications.length - 1 && { borderBottomWidth: 0 }
+                                    ]}
+                                    activeOpacity={0.6}
+                                    onPress={() => markAsRead(notification.id)}
+                                >
+                                    <LinearGradient
+                                        colors={getNotificationGradient(notification.type)}
+                                        style={styles.notificationIndicator}
+                                    />
+                                    <View style={styles.notificationContent}>
+                                        <View style={styles.notificationHeader}>
+                                            <Text style={[styles.notificationTitle, { color: colors.text }]}>
+                                                {notification.title}
+                                            </Text>
+                                            <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>
+                                                {getTimeAgo(notification.timestamp)}
+                                            </Text>
+                                        </View>
+                                        <Text 
+                                            style={[styles.notificationMessage, { color: colors.textSecondary }]}
+                                            numberOfLines={2}
+                                        >
+                                            {notification.message}
+                                        </Text>
+                                    </View>
+                                    {!notification.read && <View style={styles.unreadDot} />}
+                                </TouchableOpacity>
+                            ))
+                        )}
+                    </ScrollView>
+
+                    {notifications.length > 0 && (
+                        <TouchableOpacity
+                            style={styles.clearAllButton}
+                            onPress={clearNotifications}
+                        >
+                            <Text style={styles.clearAllText}>Limpiar todo</Text>
+                        </TouchableOpacity>
+                    )}
+                </Animated.View>
             )}
 
-            {/* Modal de Perfil */}
-            <Modal
-                visible={showProfileMenu}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setShowProfileMenu(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setShowProfileMenu(false)}
+            {/* Dropdown de Perfil */}
+            {showProfileMenu && (
+                <Animated.View 
+                    style={[
+                        styles.profileDropdown,
+                        { backgroundColor: colors.card },
+                        {
+                            opacity: profileAnim,
+                            transform: [
+                                { 
+                                    translateY: profileAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [-10, 0]
+                                    })
+                                },
+                                {
+                                    scale: profileAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0.95, 1]
+                                    })
+                                }
+                            ]
+                        }
+                    ]}
                 >
-                    <View style={[styles.profileMenu, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                        {/* Header del perfil */}
-                        <View style={[styles.profileMenuHeader, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
-                            <View style={[styles.profileMenuAvatar, { backgroundColor: colors.primary }]}>
-                                <Text style={styles.profileMenuAvatarText}>
-                                    {user?.name ? getInitials(user.name) : 'U'}
-                                </Text>
-                            </View>
-                            <View style={styles.profileMenuInfo}>
-                                <Text style={[styles.profileMenuName, { color: colors.text }]}>{user?.name || 'Usuario'}</Text>
-                                <Text style={[styles.profileMenuEmail, { color: colors.textSecondary }]}>{user?.email || ''}</Text>
-                            </View>
+                    {/* Header con degradado */}
+                    <LinearGradient
+                        colors={[Colors.emerald[500], Colors.emerald[600]]}
+                        style={styles.profileHeader}
+                    >
+                        <View style={styles.profileAvatarLarge}>
+                            <Text style={styles.profileAvatarText}>
+                                {user?.name ? getInitials(user.name) : 'U'}
+                            </Text>
                         </View>
+                        <Text style={styles.profileName}>{user?.name || 'Usuario'}</Text>
+                        <Text style={styles.profileEmail}>{user?.email || ''}</Text>
+                    </LinearGradient>
 
-                        {/* Opciones del menú */}
-                        <View style={styles.profileMenuOptions}>
-                            <TouchableOpacity 
-                                style={styles.profileMenuItem}
-                                onPress={() => {
-                                    setShowProfileMenu(false);
-                                    router.push('/profile');
-                                }}
-                            >
-                                <Ionicons name="person-outline" size={20} color={colors.text} />
-                                <Text style={[styles.profileMenuItemText, { color: colors.text }]}>Mi Perfil</Text>
-                            </TouchableOpacity>
+                    {/* Opciones */}
+                    <View style={styles.profileOptions}>
+                        <TouchableOpacity 
+                            style={styles.profileOption}
+                            onPress={() => {
+                                closeAll();
+                                router.push('/profile');
+                            }}
+                            activeOpacity={0.6}
+                        >
+                            <View style={[styles.optionIcon, { backgroundColor: Colors.emerald[50] }]}>
+                                <Ionicons name="person-outline" size={18} color={Colors.emerald[600]} />
+                            </View>
+                            <Text style={[styles.optionText, { color: colors.text }]}>Mi Perfil</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.gray[300]} />
+                        </TouchableOpacity>
 
-                            <TouchableOpacity 
-                                style={styles.profileMenuItem}
-                                onPress={() => {
-                                    setShowProfileMenu(false);
-                                    router.push('/(tabs)/configuration');
-                                }}
-                            >
-                                <Ionicons name="settings-outline" size={20} color={colors.text} />
-                                <Text style={[styles.profileMenuItemText, { color: colors.text }]}>Configuración</Text>
-                            </TouchableOpacity>
+                        <TouchableOpacity 
+                            style={styles.profileOption}
+                            onPress={() => {
+                                closeAll();
+                                router.push('/(tabs)/configuration');
+                            }}
+                            activeOpacity={0.6}
+                        >
+                            <View style={[styles.optionIcon, { backgroundColor: Colors.blue[50] }]}>
+                                <Ionicons name="settings-outline" size={18} color={Colors.blue[500]} />
+                            </View>
+                            <Text style={[styles.optionText, { color: colors.text }]}>Configuración</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.gray[300]} />
+                        </TouchableOpacity>
 
-                            <TouchableOpacity 
-                                style={styles.profileMenuItem}
-                                onPress={() => {
-                                    setShowProfileMenu(false);
-                                    // Mostrar info de la app
-                                    Alert.alert(
-                                        'AgroMind',
-                                        'Sistema de Riego Inteligente\nVersión 1.0.0\n\n© 2025 AgroMind',
-                                        [{ text: 'OK' }]
-                                    );
-                                }}
-                            >
-                                <Ionicons name="information-circle-outline" size={20} color={colors.text} />
-                                <Text style={[styles.profileMenuItemText, { color: colors.text }]}>Acerca de</Text>
-                            </TouchableOpacity>
+                        <TouchableOpacity 
+                            style={styles.profileOption}
+                            onPress={() => {
+                                closeAll();
+                                Alert.alert(
+                                    'AgroMind',
+                                    'Sistema de Riego Inteligente\nVersión 1.0.0\n\n© 2025 AgroMind',
+                                    [{ text: 'OK' }]
+                                );
+                            }}
+                            activeOpacity={0.6}
+                        >
+                            <View style={[styles.optionIcon, { backgroundColor: Colors.purple[50] }]}>
+                                <Ionicons name="information-circle-outline" size={18} color={Colors.purple[500]} />
+                            </View>
+                            <Text style={[styles.optionText, { color: colors.text }]}>Acerca de</Text>
+                            <Ionicons name="chevron-forward" size={18} color={Colors.gray[300]} />
+                        </TouchableOpacity>
 
-                            <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
+                        <View style={styles.divider} />
 
-                            <TouchableOpacity 
-                                style={[styles.profileMenuItem, styles.logoutItem]}
-                                onPress={handleLogout}
-                            >
-                                <Ionicons name="log-out-outline" size={20} color={Colors.red[500]} />
-                                <Text style={[styles.profileMenuItemText, styles.logoutText]}>
-                                    Cerrar Sesión
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity 
+                            style={styles.logoutOption}
+                            onPress={handleLogout}
+                            activeOpacity={0.6}
+                        >
+                            <Ionicons name="log-out-outline" size={18} color={Colors.red[500]} />
+                            <Text style={styles.logoutText}>Cerrar sesión</Text>
+                        </TouchableOpacity>
                     </View>
-                </TouchableOpacity>
-            </Modal>
-        </View>
+                </Animated.View>
+            )}
+        </>
     );
 };
 
@@ -514,9 +649,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: Spacing.lg,
-        paddingTop: Platform.OS === 'ios' ? 60 : Spacing.xl,
+        paddingTop: Platform.OS === 'ios' ? 56 : Spacing.xl,
         paddingBottom: Spacing.md,
         borderBottomWidth: 1,
+        zIndex: 100,
     },
     leftSection: {
         flexDirection: 'row',
@@ -524,8 +660,9 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
     },
     logoContainer: {
-        width: 32,
-        height: 32,
+        width: 36,
+        height: 36,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -540,20 +677,22 @@ const styles = StyleSheet.create({
         gap: Spacing.md,
     },
     iconButton: {
-        padding: Spacing.xs,
+        width: 44,
+        height: 44,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
         position: 'relative',
     },
     badge: {
         position: 'absolute',
-        top: 2,
-        right: 2,
+        top: -2,
+        right: -2,
         minWidth: 18,
         height: 18,
         borderRadius: 9,
         backgroundColor: Colors.red[500],
         zIndex: 1,
-        borderWidth: 2,
-        borderColor: '#fff',
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 4,
@@ -563,211 +702,237 @@ const styles = StyleSheet.create({
         fontSize: 10,
         fontWeight: '700',
     },
-    profileButton: {
-        marginLeft: Spacing.xs,
-    },
+    profileButton: {},
     avatar: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 2,
     },
     avatarText: {
-        fontSize: FontSizes.sm,
+        fontSize: FontSizes.base,
         fontWeight: '700',
+        color: '#fff',
     },
-    // Notificaciones Dropdown
-    notificationBackdrop: {
+    // Backdrop
+    backdrop: {
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.3)',
         zIndex: 998,
     },
+    // Notificaciones Dropdown
     notificationDropdown: {
         position: 'absolute',
-        top: Platform.OS === 'ios' ? 110 : 90,
-        right: Spacing.lg,
-        width: 360,
-        maxWidth: '90%',
-        maxHeight: 500,
+        top: Platform.OS === 'ios' ? 105 : 85,
+        right: Spacing.md,
+        width: SCREEN_WIDTH - Spacing.md * 2,
+        maxWidth: 380,
+        maxHeight: 440,
         borderRadius: BorderRadius.xl,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
+        shadowOffset: { width: 0, height: 12 },
         shadowOpacity: 0.15,
-        shadowRadius: 20,
-        elevation: 10,
+        shadowRadius: 24,
+        elevation: 15,
         zIndex: 999,
-        borderWidth: 1,
-        borderColor: Colors.gray[200],
+        overflow: 'hidden',
     },
-    notificationHeader: {
+    dropdownHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
         borderBottomWidth: 1,
+        borderBottomColor: Colors.gray[100],
     },
-    notificationTitle: {
-        fontSize: FontSizes.lg,
+    dropdownTitle: {
+        fontSize: FontSizes.base,
         fontWeight: '700',
     },
-    notificationHeaderActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
-    },
-    markReadButton: {
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: 4,
-    },
-    markReadText: {
+    markAllText: {
         fontSize: FontSizes.xs,
         fontWeight: '600',
+        color: Colors.emerald[600],
     },
     notificationList: {
-        padding: Spacing.sm,
+        maxHeight: 320,
     },
-    emptyNotifications: {
-        alignItems: 'center',
+    emptyContainer: {
+        flex: 1,
         justifyContent: 'center',
-        paddingVertical: Spacing.xxl * 2,
     },
-    emptyText: {
+    emptyState: {
+        alignItems: 'center',
+        paddingVertical: Spacing.xxl,
+    },
+    emptyIcon: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    emptyTitle: {
         fontSize: FontSizes.base,
-        marginTop: Spacing.md,
+        fontWeight: '600',
+        marginBottom: 4,
+    },
+    emptySubtitle: {
+        fontSize: FontSizes.sm,
+        textAlign: 'center',
     },
     notificationItem: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        padding: Spacing.md,
-        borderRadius: BorderRadius.md,
-        marginBottom: Spacing.xs,
-        marginHorizontal: Spacing.sm,
-        borderWidth: 1,
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.gray[50],
     },
     notificationUnread: {
-        backgroundColor: Colors.blue[50],
-        borderColor: Colors.blue[100],
+        backgroundColor: Colors.emerald[50] + '30',
     },
-    notificationIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
+    notificationIndicator: {
+        width: 4,
+        height: '100%',
+        minHeight: 40,
+        borderRadius: 2,
         marginRight: Spacing.md,
     },
     notificationContent: {
         flex: 1,
     },
-    notificationItemTitle: {
-        fontSize: FontSizes.base,
-        fontWeight: '600',
-        marginBottom: 2,
-    },
-    notificationMessage: {
-        fontSize: FontSizes.sm,
+    notificationHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         marginBottom: 4,
-        lineHeight: 18,
+    },
+    notificationTitle: {
+        fontSize: FontSizes.sm,
+        fontWeight: '600',
+        flex: 1,
     },
     notificationTime: {
         fontSize: FontSizes.xs,
+        marginLeft: Spacing.sm,
+    },
+    notificationMessage: {
+        fontSize: FontSizes.sm,
+        lineHeight: 18,
     },
     unreadDot: {
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: Colors.blue[500],
+        backgroundColor: Colors.emerald[500],
         marginLeft: Spacing.sm,
-        marginTop: 6,
+        marginTop: 4,
     },
-    clearButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: Spacing.xs,
+    clearAllButton: {
         paddingVertical: Spacing.sm,
-        paddingHorizontal: Spacing.md,
-        marginTop: Spacing.xs,
+        alignItems: 'center',
         borderTopWidth: 1,
+        borderTopColor: Colors.gray[100],
     },
-    clearButtonText: {
+    clearAllText: {
         fontSize: FontSizes.sm,
         fontWeight: '600',
+        color: Colors.gray[400],
     },
-    // Menú de Perfil
-    profileMenu: {
-        margin: Spacing.lg,
-        borderRadius: BorderRadius.xxl,
-        overflow: 'hidden',
+    // Profile Dropdown
+    profileDropdown: {
+        position: 'absolute',
+        top: Platform.OS === 'ios' ? 105 : 85,
+        right: Spacing.md,
+        width: 260,
+        borderRadius: BorderRadius.xl,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 20,
-        elevation: 10,
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.15,
+        shadowRadius: 24,
+        elevation: 15,
+        zIndex: 999,
+        overflow: 'hidden',
     },
-    profileMenuHeader: {
-        flexDirection: 'row',
+    profileHeader: {
+        paddingVertical: Spacing.xl,
+        paddingHorizontal: Spacing.lg,
         alignItems: 'center',
-        padding: Spacing.xl,
-        borderBottomWidth: 1,
     },
-    profileMenuAvatar: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
+    profileAvatarLarge: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: 'rgba(255,255,255,0.25)',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: Spacing.md,
-        borderWidth: 3,
+        marginBottom: Spacing.sm,
     },
-    profileMenuAvatarText: {
+    profileAvatarText: {
         fontSize: FontSizes.xl,
         fontWeight: '700',
         color: '#fff',
     },
-    profileMenuInfo: {
-        flex: 1,
-    },
-    profileMenuName: {
-        fontSize: FontSizes.lg,
+    profileName: {
+        fontSize: FontSizes.base,
         fontWeight: '700',
+        color: '#fff',
         marginBottom: 2,
     },
-    profileMenuEmail: {
-        fontSize: FontSizes.sm,
-        color: Colors.gray[600],
+    profileEmail: {
+        fontSize: FontSizes.xs,
+        color: 'rgba(255,255,255,0.8)',
     },
-    profileMenuOptions: {
-        padding: Spacing.md,
+    profileOptions: {
+        paddingVertical: Spacing.sm,
     },
-    profileMenuItem: {
+    profileOption: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: Spacing.md,
-        borderRadius: BorderRadius.lg,
-        gap: Spacing.md,
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.lg,
     },
-    profileMenuItemText: {
-        fontSize: FontSizes.base,
+    optionIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+    },
+    optionText: {
+        flex: 1,
+        fontSize: FontSizes.sm,
         fontWeight: '500',
-        color: Colors.gray[700],
     },
-    menuDivider: {
+    divider: {
         height: 1,
         backgroundColor: Colors.gray[100],
-        marginVertical: Spacing.sm,
+        marginVertical: Spacing.xs,
+        marginHorizontal: Spacing.lg,
     },
-    logoutItem: {
+    logoutOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.sm,
+        paddingVertical: Spacing.md,
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.sm,
         backgroundColor: Colors.red[50],
+        borderRadius: BorderRadius.lg,
     },
     logoutText: {
-        color: Colors.red[600],
+        fontSize: FontSizes.sm,
         fontWeight: '600',
+        color: Colors.red[500],
     },
 });

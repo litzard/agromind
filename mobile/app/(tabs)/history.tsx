@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { Header } from '../../components/Header';
 import { Zone } from '../../types';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../styles/theme';
@@ -23,11 +24,20 @@ interface Event {
     timestamp: string;
     zoneId: number;
     mode?: 'automatic' | 'manual';
-    duration?: number; // in minutes
+    duration?: number;
+    metadata?: {
+        automatic?: boolean;
+        duration?: number;
+        soilMoisture?: number;
+        threshold?: number;
+        tankLevel?: number;
+        [key: string]: any;
+    };
 }
 
 export default function HistoryScreen() {
     const { user } = useAuth();
+    const { colors } = useTheme();
     const [events, setEvents] = useState<Event[]>([]);
     const [zones, setZones] = useState<Zone[]>([]);
     const [loading, setLoading] = useState(true);
@@ -56,22 +66,33 @@ export default function HistoryScreen() {
                 fetch(`${API_CONFIG.BASE_URL}/events/${user?.id}`)
             ]);
 
-            if (zonesRes.ok && eventsRes.ok) {
+            if (zonesRes.ok) {
                 const zonesData = await zonesRes.json();
-                const eventsData = await eventsRes.json();
-
-                // Enrich events with mode info (you can also get this from backend)
-                const enrichedEvents = eventsData.map((event: Event) => ({
-                    ...event,
-                    mode: event.type.includes('AUTO') || event.type.includes('Automático') ? 'automatic' : 'manual',
-                    duration: Math.floor(Math.random() * 20) + 5, // Mock duration, replace with real data
-                }));
-
                 setZones(zonesData);
+            }
+
+            if (eventsRes.ok) {
+                const eventsData = await eventsRes.json();
+                
+                // Enriquecer eventos con información de modo
+                const enrichedEvents = eventsData.map((event: Event) => {
+                    const isAutomatic = event.type.includes('AUTO') || 
+                                        event.metadata?.automatic === true;
+                    return {
+                        ...event,
+                        mode: isAutomatic ? 'automatic' : 'manual',
+                        duration: event.metadata?.duration,
+                    };
+                });
+
                 setEvents(enrichedEvents);
+            } else {
+                // Si no hay eventos aún, mostrar lista vacía
+                setEvents([]);
             }
         } catch (error) {
             console.error('Error loading history:', error);
+            setEvents([]);
         } finally {
             setLoading(false);
         }
@@ -100,22 +121,25 @@ export default function HistoryScreen() {
 
     const getEventIcon = (type: string) => {
         if (type.includes('RIEGO')) return 'water';
-        if (type.includes('ALERTA')) return 'warning';
+        if (type.includes('ALERTA') || type.includes('TANQUE')) return 'warning';
         if (type.includes('CONFIG')) return 'settings';
+        if (type.includes('ZONA')) return 'leaf';
         return 'flash';
     };
 
     const getEventColor = (type: string) => {
         if (type.includes('RIEGO')) return Colors.emerald[600];
-        if (type.includes('ALERTA')) return Colors.red[500];
+        if (type.includes('ALERTA') || type.includes('TANQUE')) return Colors.red[500];
         if (type.includes('CONFIG')) return Colors.blue[500];
+        if (type.includes('ZONA')) return Colors.orange[500];
         return Colors.purple[600];
     };
 
     const getIconBackground = (type: string) => {
         if (type.includes('RIEGO')) return Colors.emerald[50];
-        if (type.includes('ALERTA')) return Colors.red[50];
+        if (type.includes('ALERTA') || type.includes('TANQUE')) return Colors.red[50];
         if (type.includes('CONFIG')) return Colors.blue[50];
+        if (type.includes('ZONA')) return Colors.orange[50];
         return Colors.purple[50];
     };
 
@@ -127,6 +151,7 @@ export default function HistoryScreen() {
             <Animated.View
                 style={[
                     styles.eventCard,
+                    { backgroundColor: colors.card },
                     {
                         opacity: fadeAnim,
                         transform: [{
@@ -147,7 +172,7 @@ export default function HistoryScreen() {
                     {/* Event Info */}
                     <View style={styles.eventInfo}>
                         <View style={styles.eventHeader}>
-                            <Text style={styles.zoneName}>{zone.name}</Text>
+                            <Text style={[styles.zoneName, { color: colors.text }]}>{zone.name}</Text>
                             {item.mode && (
                                 <View style={[
                                     styles.modeBadge,
@@ -162,16 +187,16 @@ export default function HistoryScreen() {
                                 </View>
                             )}
                         </View>
-                        <Text style={styles.eventDescription}>{item.description}</Text>
+                        <Text style={[styles.eventDescription, { color: colors.textSecondary }]}>{item.description}</Text>
                         <View style={styles.eventMeta}>
                             <View style={styles.metaItem}>
-                                <Ionicons name="time-outline" size={14} color={Colors.gray[500]} />
-                                <Text style={styles.metaText}>{getTimeAgo(item.timestamp)}</Text>
+                                <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
+                                <Text style={[styles.metaText, { color: colors.textSecondary }]}>{getTimeAgo(item.timestamp)}</Text>
                             </View>
                             {item.duration && (
                                 <View style={styles.metaItem}>
-                                    <Ionicons name="water-outline" size={14} color={Colors.gray[500]} />
-                                    <Text style={styles.metaText}>{item.duration} min de riego</Text>
+                                    <Ionicons name="water-outline" size={14} color={colors.textSecondary} />
+                                    <Text style={[styles.metaText, { color: colors.textSecondary }]}>{item.duration} min de riego</Text>
                                 </View>
                             )}
                         </View>
@@ -183,8 +208,8 @@ export default function HistoryScreen() {
 
     if (loading) {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={Colors.emerald[600]} />
+            <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+                <ActivityIndicator size="large" color={colors.primary} />
             </View>
         );
     }
@@ -194,24 +219,24 @@ export default function HistoryScreen() {
         : `Todas las zonas (${zones.length})`;
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
             <Header />
 
             <View style={styles.content}>
                 {/* Page Title */}
-                <View style={styles.pageHeader}>
-                    <Text style={styles.title}>Historial de Eventos</Text>
-                    <Text style={styles.subtitle}>Registro de actividad del sistema de riego</Text>
+                <View style={[styles.pageHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+                    <Text style={[styles.title, { color: colors.text }]}>Historial de Eventos</Text>
+                    <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Registro de actividad del sistema de riego</Text>
                 </View>
 
                 {/* Filter Dropdown */}
                 <TouchableOpacity
-                    style={styles.filterButton}
+                    style={[styles.filterButton, { backgroundColor: colors.card, borderColor: colors.border }]}
                     onPress={() => setShowZoneModal(true)}
                 >
-                    <Ionicons name="funnel-outline" size={20} color={Colors.gray[600]} />
-                    <Text style={styles.filterText}>{selectedZoneName}</Text>
-                    <Ionicons name="chevron-down" size={20} color={Colors.gray[400]} />
+                    <Ionicons name="funnel-outline" size={20} color={colors.textSecondary} />
+                    <Text style={[styles.filterText, { color: colors.text }]}>{selectedZoneName}</Text>
+                    <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
 
                 {/* Events List */}
@@ -223,8 +248,8 @@ export default function HistoryScreen() {
                     showsVerticalScrollIndicator={false}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
-                            <Ionicons name="calendar-outline" size={64} color={Colors.gray[300]} />
-                            <Text style={styles.emptyText}>No hay eventos registrados</Text>
+                            <Ionicons name="calendar-outline" size={64} color={colors.border} />
+                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No hay eventos registrados</Text>
                         </View>
                     }
                 />
@@ -242,17 +267,18 @@ export default function HistoryScreen() {
                     activeOpacity={1}
                     onPress={() => setShowZoneModal(false)}
                 >
-                    <View style={styles.modalContent}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Filtrar por zona</Text>
+                    <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+                        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                            <Text style={[styles.modalTitle, { color: colors.text }]}>Filtrar por zona</Text>
                             <TouchableOpacity onPress={() => setShowZoneModal(false)}>
-                                <Ionicons name="close" size={24} color={Colors.gray[600]} />
+                                <Ionicons name="close" size={24} color={colors.textSecondary} />
                             </TouchableOpacity>
                         </View>
 
                         <TouchableOpacity
                             style={[
                                 styles.zoneOption,
+                                { borderBottomColor: colors.border },
                                 selectedZoneId === null && styles.zoneOptionActive
                             ]}
                             onPress={() => {
@@ -262,6 +288,7 @@ export default function HistoryScreen() {
                         >
                             <Text style={[
                                 styles.zoneOptionText,
+                                { color: colors.text },
                                 selectedZoneId === null && styles.zoneOptionTextActive
                             ]}>
                                 Todas las zonas ({zones.length})
@@ -276,6 +303,7 @@ export default function HistoryScreen() {
                                 key={zone.id}
                                 style={[
                                     styles.zoneOption,
+                                    { borderBottomColor: colors.border },
                                     selectedZoneId === zone.id && styles.zoneOptionActive
                                 ]}
                                 onPress={() => {
@@ -285,6 +313,7 @@ export default function HistoryScreen() {
                             >
                                 <Text style={[
                                     styles.zoneOptionText,
+                                    { color: colors.text },
                                     selectedZoneId === zone.id && styles.zoneOptionTextActive
                                 ]}>
                                     {zone.name}
@@ -304,13 +333,11 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.gray[50],
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: Colors.gray[50],
     },
     content: {
         flex: 1,
@@ -319,53 +346,51 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.lg,
         paddingBottom: Spacing.md,
-        backgroundColor: '#fff',
         borderBottomWidth: 1,
-        borderBottomColor: Colors.gray[100],
     },
     title: {
         fontSize: FontSizes['3xl'],
-        fontWeight: '700',
-        color: Colors.gray[900],
+        fontWeight: '800',
         marginBottom: 4,
+        letterSpacing: -0.5,
     },
     subtitle: {
         fontSize: FontSizes.sm,
-        color: Colors.gray[500],
     },
     filterButton: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
-        backgroundColor: '#fff',
         marginHorizontal: Spacing.lg,
         marginVertical: Spacing.md,
         paddingHorizontal: Spacing.md,
-        paddingVertical: 12,
-        borderRadius: BorderRadius.lg,
+        paddingVertical: 14,
+        borderRadius: BorderRadius.xl,
         borderWidth: 1.5,
-        borderColor: Colors.gray[200],
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
     filterText: {
         flex: 1,
         fontSize: FontSizes.base,
-        fontWeight: '600',
-        color: Colors.gray[700],
+        fontWeight: '700',
     },
     listContent: {
         padding: Spacing.lg,
         paddingTop: 0,
     },
     eventCard: {
-        backgroundColor: '#fff',
-        borderRadius: BorderRadius.xl,
+        borderRadius: BorderRadius.xxl,
         marginBottom: Spacing.md,
-        padding: Spacing.md,
+        padding: Spacing.lg,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-        elevation: 2,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 3,
     },
     eventContent: {
         flexDirection: 'row',
@@ -389,8 +414,7 @@ const styles = StyleSheet.create({
     },
     zoneName: {
         fontSize: FontSizes.lg,
-        fontWeight: '700',
-        color: Colors.gray[900],
+        fontWeight: '800',
     },
     modeBadge: {
         paddingHorizontal: 10,
@@ -403,7 +427,6 @@ const styles = StyleSheet.create({
     },
     eventDescription: {
         fontSize: FontSizes.sm,
-        color: Colors.gray[600],
         marginBottom: 8,
         lineHeight: 20,
     },
@@ -418,7 +441,6 @@ const styles = StyleSheet.create({
     },
     metaText: {
         fontSize: FontSizes.xs,
-        color: Colors.gray[500],
     },
     emptyContainer: {
         alignItems: 'center',
@@ -428,8 +450,7 @@ const styles = StyleSheet.create({
     emptyText: {
         marginTop: Spacing.md,
         fontSize: FontSizes.base,
-        color: Colors.gray[500],
-        fontWeight: '500',
+        fontWeight: '600',
     },
     // Modal Styles
     modalOverlay: {
@@ -438,9 +459,8 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modalContent: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
+        borderTopLeftRadius: BorderRadius.xxl,
+        borderTopRightRadius: BorderRadius.xxl,
         paddingBottom: Spacing.xl,
         maxHeight: '70%',
     },
@@ -450,12 +470,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: Spacing.lg,
         borderBottomWidth: 1,
-        borderBottomColor: Colors.gray[100],
     },
     modalTitle: {
         fontSize: FontSizes.xl,
-        fontWeight: '700',
-        color: Colors.gray[900],
+        fontWeight: '800',
     },
     zoneOption: {
         flexDirection: 'row',
@@ -464,15 +482,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
         borderBottomWidth: 1,
-        borderBottomColor: Colors.gray[50],
     },
     zoneOptionActive: {
         backgroundColor: Colors.emerald[50],
     },
     zoneOptionText: {
         fontSize: FontSizes.base,
-        fontWeight: '500',
-        color: Colors.gray[700],
+        fontWeight: '600',
     },
     zoneOptionTextActive: {
         color: Colors.emerald[700],

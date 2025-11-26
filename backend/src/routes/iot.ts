@@ -1,7 +1,17 @@
 import express from 'express';
 import Zone from '../models/Zone';
+import Event from '../models/Event';
 
 const router = express.Router();
+
+// Helper para crear eventos
+const createEvent = async (userId: number, zoneId: number, type: string, description: string, metadata?: object) => {
+  try {
+    await Event.create({ userId, zoneId, type, description, metadata });
+  } catch (error) {
+    console.error('Error creating event:', error);
+  }
+};
 
 // ESP32 envía datos de sensores
 router.post('/sensor-data', async (req, res) => {
@@ -20,9 +30,8 @@ router.post('/sensor-data', async (req, res) => {
     const currentStatus = (zone.status as any) || {};
     const currentSensors = (zone.sensors as any) || {};
     
-    // IMPORTANTE: Capturar el comando manual ANTES de cualquier update
+    // Capturar el comando manual ANTES de cualquier update
     const manualPumpCommand = currentStatus.manualPumpCommand;
-    console.log(`🔧 Comando manual pendiente para zona ${zoneId}:`, manualPumpCommand);
 
     // Actualizar sensores con datos del ESP32
     const updatedSensors = {
@@ -57,12 +66,50 @@ router.post('/sensor-data', async (req, res) => {
       manualPumpCommand: manualPumpCommand
     };
 
+    // Detectar cambios de estado de bomba para registrar eventos
+    const previousPumpStatus = currentStatus.pump;
+    const pumpChanged = previousPumpStatus !== pumpStatus;
+
     await zone.update({
       sensors: updatedSensors,
       status: updatedStatus
     });
 
-    console.log(`📡 Datos recibidos de ESP32 - Zona ${zoneId}:`, sensors);
+    // Registrar eventos de cambio de bomba (riego automático)
+    if (pumpChanged && zone.userId) {
+      const config = zone.config as any;
+      const isAutoMode = config.autoMode;
+
+      if (pumpStatus === 'ON' && isAutoMode) {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'RIEGO_AUTO_INICIO',
+          `Riego automático iniciado en ${zone.name} (humedad: ${updatedSensors.soilMoisture}%)`,
+          { 
+            soilMoisture: updatedSensors.soilMoisture,
+            threshold: config.moistureThreshold,
+            automatic: true 
+          }
+        );
+      } else if (pumpStatus === 'OFF' && previousPumpStatus === 'ON') {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          isAutoMode ? 'RIEGO_AUTO_FIN' : 'RIEGO_FIN',
+          `Riego finalizado en ${zone.name}`,
+          { automatic: isAutoMode }
+        );
+      } else if (pumpStatus === 'LOCKED') {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'ALERTA_TANQUE',
+          `Bomba bloqueada en ${zone.name}: tanque vacío (${updatedSensors.tankLevel}%)`,
+          { tankLevel: updatedSensors.tankLevel }
+        );
+      }
+    }
 
     // Responder con comandos para el ESP32
     // El backend NO controla la bomba en modo automático - solo informa la configuración
@@ -83,8 +130,6 @@ router.post('/sensor-data', async (req, res) => {
       }
     };
 
-    console.log(`📤 Enviando a ESP32:`, response.commands);
-
     // Limpiar comando manual después de enviarlo
     if (manualPumpCommand !== undefined) {
       await zone.update({ 
@@ -93,7 +138,6 @@ router.post('/sensor-data', async (req, res) => {
           manualPumpCommand: undefined 
         } 
       });
-      console.log(`✅ Comando manual limpiado para zona ${zoneId}`);
     }
 
     res.json(response);

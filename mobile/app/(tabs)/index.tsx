@@ -11,7 +11,7 @@ import {
     Modal,
     Dimensions,
 } from 'react-native';
-import { Link, useFocusEffect } from 'expo-router';
+import { Link, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { LinearGradient as ExpoLinearGradient } from 'expo-linear-gradient';
@@ -91,6 +91,8 @@ const mergeZoneConfig = (current?: ZoneConfig | null, incoming?: ZoneConfig | nu
 export default function DashboardScreen() {
     const { user } = useAuth();
     const { colors } = useTheme();
+    const params = useLocalSearchParams();
+    const initialZoneId = params.zoneId ? (Array.isArray(params.zoneId) ? params.zoneId[0] : params.zoneId) : null;
     const { startTutorial, hasCompletedTutorial, isActive: tutorialActive, currentStep, steps, setCurrentScreen } = useTutorial();
     const [zones, setZones] = useState<Zone[]>([]);
     const [activeZoneId, setActiveZoneId] = useState<string>('');
@@ -159,9 +161,14 @@ export default function DashboardScreen() {
 
     useEffect(() => {
         if (zones.length > 0 && !activeZoneId) {
-            setActiveZoneId(zones[0].id.toString());
+            // Si viene de crear una zona, seleccionarla automáticamente
+            if (initialZoneId && zones.find(z => z.id.toString() === initialZoneId)) {
+                setActiveZoneId(initialZoneId);
+            } else {
+                setActiveZoneId(zones[0].id.toString());
+            }
         }
-    }, [zones, activeZoneId]);
+    }, [zones, activeZoneId, initialZoneId]);
 
     useEffect(() => {
         if (!loading && zones.length > 0 && !hasAnimated.current) {
@@ -614,7 +621,7 @@ export default function DashboardScreen() {
                     <Card style={[styles.mainCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                         {/* Auto Mode Toggle - Top Right */}
                         <View style={styles.autoModeTopRight}>
-                            <Text style={styles.autoModeLabel}>MODO AUTO</Text>
+                            <Text style={styles.autoModeLabel}>Modo Auto</Text>
                             <TouchableOpacity
                                 style={[styles.switch, activeZone.config.autoMode && styles.switchActive]}
                                 onPress={toggleAutoMode}
@@ -723,33 +730,25 @@ export default function DashboardScreen() {
                             <View style={[styles.pumpDot, {
                                 backgroundColor: !hasSensorData
                                     ? Colors.gray[300]
-                                    : pumpRunning
+                                    : (activeZone.status.pump === 'ON' || manualWatering)
                                         ? Colors.emerald[500]
-                                        : pumpLocked
+                                        : activeZone.status.pump === 'LOCKED'
                                             ? Colors.red[500]
-                                            : autoModeNeedsWatering
-                                                ? Colors.yellow[500]
-                                                : Colors.gray[300]
+                                            : Colors.gray[300]
                             }]} />
                             <Text style={[styles.pumpTextMinimal, { 
-                                color: pumpRunning
+                                color: (activeZone.status.pump === 'ON' || manualWatering) 
                                     ? Colors.emerald[600] 
-                                    : autoModeNeedsWatering
-                                        ? Colors.yellow[600]
-                                        : colors.textSecondary,
-                                fontWeight: pumpRunning ? '700' : '600'
+                                    : colors.textSecondary,
+                                fontWeight: (activeZone.status.pump === 'ON' || manualWatering) ? '700' : '600'
                             }]}>
                                 {!hasSensorData
                                     ? 'Esperando datos del ESP32'
-          : pumpRunning
-                                        ? '💧 BOMBA ACTIVA - Regando'
-                                        : pumpLocked
+                                    : (activeZone.status.pump === 'ON' || manualWatering)
+                                        ? 'Bomba Activa'
+                                        : activeZone.status.pump === 'LOCKED'
                                             ? '🔒 Bomba bloqueada (tanque bajo)'
-                                            : autoModeNeedsWatering
-                                                ? '⚡ Auto-riego activándose...'
-                                                : isAutoModeEnabled
-                                                    ? `🌱 Modo auto (umbral: ${activeZone.config.moistureThreshold}%)`
-                                                    : 'Bomba inactiva'}
+                                            : 'Bomba inactiva'}
                             </Text>
                         </View>
 
@@ -966,10 +965,10 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.xs,
     },
     zoneName: {
-        fontSize: 28,
+        fontSize: 30,
         fontWeight: '800',
         color: Colors.gray[900],
-        letterSpacing: -0.5,
+        letterSpacing: -0.8,
     },
     zoneSelectorButton: {
         padding: Spacing.xs,
@@ -982,15 +981,21 @@ const styles = StyleSheet.create({
     typeTag: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: 4,
+        gap: 6,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 6,
         borderRadius: BorderRadius.full,
+        shadowColor: Colors.emerald[500],
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 2,
     },
     typeText: {
         fontSize: FontSizes.xs,
         fontWeight: '700',
         color: Colors.emerald[700],
+        letterSpacing: 0.3,
     },
     connectionStatus: {
         flexDirection: 'row',
@@ -1009,15 +1014,16 @@ const styles = StyleSheet.create({
     },
     mainCard: {
         marginBottom: Spacing.lg,
-        padding: Spacing.lg,
+        padding: Spacing.xl,
         position: 'relative',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.06,
-        shadowRadius: 16,
-        elevation: 8,
+        shadowColor: Colors.emerald[600],
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.08,
+        shadowRadius: 24,
+        elevation: 10,
         borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.05)',
+        borderColor: 'rgba(16, 185, 129, 0.1)',
+        borderRadius: BorderRadius.xxl + 8,
     },
     autoModeTopRight: {
         position: 'absolute',
@@ -1060,10 +1066,11 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
     },
     sensorMinimalValue: {
-        fontSize: 18,
-        fontWeight: '700',
+        fontSize: 20,
+        fontWeight: '800',
         color: Colors.gray[900],
-        marginVertical: 4,
+        marginVertical: 6,
+        letterSpacing: -0.5,
     },
     pumpStatusMinimal: {
         flexDirection: 'row',
@@ -1083,49 +1090,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: Colors.gray[600],
     },
-    autoModeNotice: {
-        fontSize: FontSizes.xs,
-        fontWeight: '600',
-        textAlign: 'center',
-        marginBottom: Spacing.sm,
-    },
-    moistureTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.xs,
-        marginBottom: Spacing.md,
-    },
-    moistureTitleCentered: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: Colors.gray[400],
-        letterSpacing: 1,
-        textAlign: 'center',
-        marginBottom: Spacing.md,
-    },
-    iconBox: {
-        width: 32,
-        height: 32,
-        borderRadius: BorderRadius.md,
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
-        elevation: 2,
-    },
-    cardTitle: {
-        fontSize: FontSizes.xs,
-        fontWeight: '700',
-        color: Colors.gray[500],
-        letterSpacing: 0.5,
-    },
-    autoModeContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
-    },
+
     autoModeLabel: {
         fontSize: FontSizes.xs,
         fontWeight: '700',
@@ -1167,52 +1132,7 @@ const styles = StyleSheet.create({
     switchThumbActive: {
         transform: [{ translateX: 20 }],
     },
-    sensorsRow: {
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        justifyContent: 'space-between',
-        marginTop: Spacing.xl,
-        paddingTop: Spacing.xl,
-        borderTopWidth: 1,
-        borderTopColor: Colors.gray[100],
-        gap: Spacing.lg,
-    },
-    sensorColumn: {
-        flex: 1,
-        alignItems: 'center',
-        gap: 8,
-    },
-    sensorDivider: {
-        width: 2,
-        alignSelf: 'stretch',
-        backgroundColor: Colors.gray[200],
-        borderRadius: 1,
-    },
-    sensorRowLabel: {
-        fontSize: 10,
-        fontWeight: '700',
-        color: Colors.gray[400],
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
-        marginTop: 4,
-    },
-    sensorRowValue: {
-        fontSize: 28,
-        fontWeight: '800',
-        color: Colors.gray[900],
-        marginVertical: 6,
-    },
-    sensorRowBar: {
-        width: '100%',
-        height: 6,
-        borderRadius: 3,
-        overflow: 'hidden',
-        backgroundColor: 'rgba(0,0,0,0.05)',
-    },
-    sensorRowBarFill: {
-        height: '100%',
-        borderRadius: 2,
-    },
+
     progressContainer: {
         width: 160,
         height: 160,
@@ -1226,93 +1146,61 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     progressValue: {
-        fontSize: 42,
+        fontSize: 48,
         fontWeight: '800',
         color: Colors.gray[900],
+        letterSpacing: -1,
     },
     progressUnit: {
-        fontSize: 20,
+        fontSize: 22,
         color: Colors.gray[400],
+        fontWeight: '600',
     },
     progressLabel: {
         fontSize: 11,
-        fontWeight: '700',
+        fontWeight: '800',
         color: Colors.gray[400],
-        marginTop: 4,
-        marginBottom: Spacing.xs,
+        marginTop: 6,
+        marginBottom: Spacing.sm,
+        letterSpacing: 1,
     },
     statusBadge: {
-        paddingHorizontal: Spacing.md,
-        paddingVertical: 4,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: 6,
         borderRadius: BorderRadius.full,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 1,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 4,
+        elevation: 2,
     },
     statusText: {
         fontSize: FontSizes.xs,
-        fontWeight: '700',
+        fontWeight: '800',
+        letterSpacing: 0.5,
     },
 
-    statsRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: Spacing.xl,
-    },
-    statItem: {
-        flex: 1,
-    },
-    statLabel: {
-        fontSize: FontSizes.xs,
-        fontWeight: '700',
-        color: Colors.gray[400],
-        marginBottom: 4,
-    },
-    statValue: {
-        fontSize: FontSizes.xl,
-        fontWeight: '700',
-        color: Colors.gray[900],
-    },
-    pumpStatusRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: Spacing.md,
-        paddingTop: Spacing.md,
-        borderTopWidth: 1,
-        borderTopColor: Colors.gray[100],
-    },
-    pumpLabel: {
-        fontSize: FontSizes.sm,
-        fontWeight: '600',
-        color: Colors.gray[500],
-    },
-    pumpValue: {
-        fontSize: FontSizes.sm,
-        fontWeight: '700',
-    },
     manualWaterButton: {
-        borderRadius: BorderRadius.xl,
-        padding: Spacing.lg,
+        borderRadius: BorderRadius.xl + 4,
+        padding: Spacing.lg + 2,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        elevation: 8,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 16,
+        elevation: 12,
     },
     manualWaterButtonActive: {
         shadowColor: Colors.emerald[600],
-        shadowOpacity: 0.4,
+        shadowOpacity: 0.5,
     },
     manualWaterText: {
         color: '#fff',
         fontWeight: '700',
-        fontSize: FontSizes.sm,
+        fontSize: FontSizes.base,
+        letterSpacing: 0.3,
     },
     modalOverlay: {
         flex: 1,
@@ -1381,15 +1269,15 @@ const styles = StyleSheet.create({
     },
     // Weather Widget Styles
     weatherCard: {
-        marginTop: Spacing.lg,
+        marginTop: Spacing.md,
         padding: Spacing.xl,
-        borderRadius: BorderRadius.xl,
+        borderRadius: BorderRadius.xxl,
         overflow: 'hidden',
-        shadowColor: Colors.blue[200],
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 5,
+        shadowColor: Colors.blue[600],
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
+        elevation: 10,
     },
     weatherLoading: {
         alignItems: 'center',
@@ -1416,9 +1304,10 @@ const styles = StyleSheet.create({
     },
     weatherTemp: {
         color: '#fff',
-        fontSize: 48,
-        fontWeight: '700',
+        fontSize: 56,
+        fontWeight: '800',
         marginTop: 4,
+        letterSpacing: -2,
     },
     weatherDescription: {
         color: 'rgba(255,255,255,0.9)',

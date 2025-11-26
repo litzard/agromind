@@ -510,6 +510,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     zoneButtonActive: {
+        shadowColor: Colors.emerald[500],
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
     zoneButtonContent: {
         flex: 1,
@@ -519,9 +524,10 @@ const styles = StyleSheet.create({
     },
     zoneName: {
         fontSize: FontSizes.base,
-        fontWeight: '600',
+        fontWeight: '700',
     },
     zoneNameActive: {
+        fontWeight: '800',
     },
     toggleContainer: {
         flexDirection: 'row',
@@ -532,6 +538,11 @@ const styles = StyleSheet.create({
         borderWidth: 2,
     },
     toggleContainerActive: {
+        shadowColor: Colors.emerald[500],
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 2,
     },
     toggleContent: {
         flexDirection: 'row',
@@ -543,6 +554,8 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     toggleLabelActive: {
+        fontWeight: '700',
+        color: Colors.emerald[700],
     },
     settingRow: {
         flexDirection: 'row',
@@ -566,13 +579,18 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     toggle: {
-        width: 52,
-        height: 30,
-        borderRadius: 15,
-        padding: 2,
+        width: 54,
+        height: 32,
+        borderRadius: 16,
+        padding: 3,
         justifyContent: 'center',
     },
     toggleActive: {
+        shadowColor: Colors.emerald[500],
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 3,
     },
     toggleDisabled: {
         opacity: 0.5,
@@ -601,22 +619,24 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.lg,
     },
     thresholdValue: {
-        fontSize: 56,
-        fontWeight: '700',
+        fontSize: 64,
+        fontWeight: '800',
+        letterSpacing: -2,
     },
     thresholdUnit: {
         fontSize: FontSizes['2xl'],
-        fontWeight: '600',
+        fontWeight: '700',
         marginLeft: 4,
     },
     thresholdBar: {
-        height: 8,
-        borderRadius: 4,
+        height: 10,
+        borderRadius: 5,
         overflow: 'hidden',
         marginBottom: Spacing.lg,
     },
     thresholdFill: {
         height: '100%',
+        borderRadius: 5,
     },
     thresholdButtons: {
         flexDirection: 'row',

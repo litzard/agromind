@@ -19,6 +19,10 @@ router.post('/sensor-data', async (req, res) => {
 
     const currentStatus = (zone.status as any) || {};
     const currentSensors = (zone.sensors as any) || {};
+    
+    // IMPORTANTE: Capturar el comando manual ANTES de cualquier update
+    const manualPumpCommand = currentStatus.manualPumpCommand;
+    console.log(`🔧 Comando manual pendiente para zona ${zoneId}:`, manualPumpCommand);
 
     // Actualizar sensores con datos del ESP32
     const updatedSensors = {
@@ -42,12 +46,15 @@ router.post('/sensor-data', async (req, res) => {
     // Si estaba bloqueado pero el tanque ya tiene agua suficiente, desbloquear
     // (el ESP32 reportará el estado real de la bomba)
 
+    // Construir status actualizado - PRESERVAR manualPumpCommand hasta que lo enviemos
     const updatedStatus = {
       ...currentStatus,
       connection: 'ONLINE',
       lastUpdate: new Date().toISOString(),
       pump: pumpStatus,
-      hasSensorData: true
+      hasSensorData: true,
+      // Mantener el comando pendiente si existe - se limpiará después de enviarlo
+      manualPumpCommand: manualPumpCommand
     };
 
     await zone.update({
@@ -62,11 +69,7 @@ router.post('/sensor-data', async (req, res) => {
     // El firmware decide cuándo encender/apagar basándose en sus lecturas locales
     const config = zone.config as any;
     
-    // Solo enviar comando de bomba si hay un comando manual pendiente
-    // (cuando el usuario presiona el botón desde la app)
-    const manualPumpCommand = currentStatus.manualPumpCommand;
-    
-    console.log(`🔧 Comando manual pendiente para zona ${zoneId}:`, manualPumpCommand);
+    // Ya capturamos manualPumpCommand al inicio, usar esa variable
     
     const response: any = {
       success: true,

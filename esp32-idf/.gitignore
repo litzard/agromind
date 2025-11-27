@@ -1,0 +1,7 @@
+# ESP32 Build files
+build/
+sdkconfig.old
+dependencies.lock
+
+# Configuration files with credentials
+config.h

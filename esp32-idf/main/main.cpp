@@ -34,18 +34,17 @@
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 
+// ==================== CONFIGURACIÓN ====================
+// Importar configuración desde config.h (WiFi, calibraciones, etc.)
+#include "config.h"
+
 static const char *TAG = "AGROMIND";
 
 // ==================== CONFIGURACIÓN WIFI ====================
-#define WIFI_SSID "Turip"
-#define WIFI_PASS "00000000"
 #define WIFI_MAXIMUM_RETRY 10
 
 // Puerto del servidor local para configuración desde la app
 #define LOCAL_SERVER_PORT 80
-
-// ==================== CONFIGURACIÓN API ====================
-#define SERVER_URL "https://agromind-5hb1.onrender.com/api/iot/sensor-data"
 
 // ==================== PINES ====================
 #define RELAY_PIN GPIO_NUM_25
@@ -57,16 +56,12 @@ static const char *TAG = "AGROMIND";
 
 #define DHT_LEVEL_TIMEOUT_US 2000
 
-#define TANK_HEIGHT_CM 17.0f
-#define SENSOR_TO_BOTTOM_DISTANCE_CM 17.0f
-
-// Calibración del sensor de humedad del suelo
-#define SOIL_MOISTURE_DRY_ADC 3200.0f   // Valor ADC en aire (seco)
-#define SOIL_MOISTURE_WET_ADC 700.0f    // Valor ADC en agua (saturado)
-
-// Calibración del LDR - ajusta estos valores según tus lecturas
-#define LDR_DARK_ADC 500.0f      // Valor ADC cuando está oscuro (ajusta según tu lectura)
-#define LDR_BRIGHT_ADC 3500.0f   // Valor ADC cuando tiene mucha luz (ajusta según tu lectura)
+// Nota: Las siguientes constantes ahora vienen de config.h:
+// - WIFI_SSID, WIFI_PASS
+// - SERVER_URL
+// - TANK_HEIGHT_CM, SENSOR_TO_BOTTOM_DISTANCE_CM
+// - SOIL_MOISTURE_DRY_ADC, SOIL_MOISTURE_WET_ADC
+// - LDR_DARK_ADC, LDR_BRIGHT_ADC
 
 // ==================== NVS KEYS ====================
 #define NVS_NAMESPACE "agromind"

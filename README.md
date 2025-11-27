@@ -1,9 +1,9 @@
 # 🌱 AgroMind - Sistema de Riego Inteligente
 
-Sistema IoT de monitoreo y control automático de riego con múltiples zonas, integración meteorológica y dashboard en tiempo real.
+Sistema IoT de monitoreo y control automático de riego con múltiples zonas, integración meteorológica y aplicación móvil multiplataforma.
 
-![AgroMind Dashboard](https://img.shields.io/badge/Status-Active-success)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+![AgroMind](https://img.shields.io/badge/Status-Active-success)
+![Render](https://img.shields.io/badge/Render-Deployed-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## 🚀 Características
@@ -11,16 +11,15 @@ Sistema IoT de monitoreo y control automático de riego con múltiples zonas, in
 ### 🎯 Gestión Multi-Zona
 - **Zonas Independientes**: Outdoor, Indoor, Greenhouse
 - **Configuración Individual**: Cada zona tiene su propio umbral de riego y configuración
-- **Creación/Eliminación**: Gestiona tus zonas fácilmente desde el dashboard
+- **Pairing ESP32**: Vincula dispositivos ESP32 a zonas desde la app móvil
 
 ### 📊 Monitoreo en Tiempo Real
-- **Sensores IoT**:
-  - 💧 Humedad del suelo
-  - 🌡️ Temperatura ambiente
-  - 💦 Nivel de tanque de agua
-  - ☀️ Nivel de luz
-  - 💨 Humedad relativa
-- **Simulación IoT**: Generación de datos realistas con variaciones aleatorias
+- **Sensores IoT (ESP32)**:
+  - 💧 Humedad del suelo (sensor capacitivo)
+  - 🌡️ Temperatura ambiente (DHT11)
+  - 💦 Nivel de tanque de agua (HC-SR04 ultrasónico)
+  - ☀️ Nivel de luz (LDR)
+  - 💨 Humedad relativa (DHT11)
 
 ### 🌦️ Integración Meteorológica
 - **API OpenWeatherMap**: Datos climáticos en tiempo real
@@ -34,66 +33,115 @@ Sistema IoT de monitoreo y control automático de riego con múltiples zonas, in
 - **Control Manual**: Toma el control cuando lo necesites
 - **Notificaciones**: Alertas de tanque bajo, riegos completados
 
-### 🎨 Interfaz Moderna
-- **React 19 + Vite**: Rendimiento ultrarrápido
-- **Tailwind CSS v4**: Diseño responsive y moderno
+### 📱 Aplicación Móvil
+- **Multiplataforma**: iOS y Android con React Native + Expo
 - **Modo Oscuro**: Cambia entre tema claro/oscuro
-- **Animaciones Fluidas**: Transiciones suaves y visuales atractivos
+- **Tiempo Real**: Dashboard actualizado con datos de sensores
+- **Configuración**: Gestiona zonas y ESP32 desde la app
 
 ### 🔐 Multi-Usuario
 - **Autenticación Completa**: Login, registro, recuperación de contraseña
 - **Datos Aislados**: Cada usuario ve solo sus zonas
-- **Sesión Persistente**: "Recordarme" con localStorage
+- **Sesión Persistente**: Mantén tu sesión activa
 
 ## 🛠️ Stack Tecnológico
 
-### Frontend
-- **React 19**: Biblioteca UI moderna
+### Mobile App
+- **React Native + Expo**: Framework multiplataforma
 - **TypeScript**: Tipado estático
-- **Vite**: Build tool ultrarrápido
-- **Tailwind CSS v4**: Framework CSS utility-first
-- **Lucide React**: Iconos SVG
-- **React Router**: Navegación SPA
+- **Expo Router**: Navegación basada en archivos
+- **React Native Paper**: Componentes UI
+- **AsyncStorage**: Persistencia local
 
-### Backend
-- **Node.js 18**: Runtime JavaScript
-- **Express**: Framework web minimalista
-- **TypeScript**: Código backend tipado
-- **Sequelize**: ORM para PostgreSQL
+### Backend (Render Cloud)
+- **Node.js 18 + Express**: API REST
+- **TypeScript**: Código tipado
+- **Sequelize ORM**: Manejo de base de datos
+- **PostgreSQL 15**: Base de datos (Render)
 - **CORS**: Manejo de peticiones cross-origin
 
-### Base de Datos
-- **PostgreSQL 15**: Base de datos relacional
-- **Docker Volume**: Persistencia de datos
+### Hardware IoT
+- **ESP32 (ESP-IDF)**: Microcontrolador WiFi
+- **Sensores**:
+  - DHT11: Temperatura y humedad
+  - Sensor capacitivo: Humedad de suelo
+  - HC-SR04: Nivel de agua (ultrasonido)
+  - LDR: Sensor de luz
+- **Actuadores**:
+  - Relé para bomba de agua
 
-### DevOps
-- **Docker Compose**: Orquestación de contenedores
-- **Nginx**: Servidor web para frontend
-- **Multi-stage Build**: Optimización de imágenes
+### Cloud & DevOps
+- **Render**: Hosting de backend y PostgreSQL
+- **HTTPS**: Comunicación segura ESP32 → Backend
+- **NVS Storage**: Configuración persistente en ESP32
 
 ## 📦 Instalación
 
 ### Prerrequisitos
-- Docker & Docker Compose
+- Node.js 18+
+- Expo CLI (para mobile)
+- ESP-IDF 5.x (para hardware)
 - Git
+
+### 🔐 Configuración de Secretos
+
+> ⚠️ **IMPORTANTE**: Antes de ejecutar el proyecto, debes configurar las variables de entorno
+
+#### 1. Backend
+```bash
+cd backend
+cp .env.example .env
+# Editar .env con tus credenciales de Render y OpenWeather API
+```
+
+#### 2. Mobile App
+```bash
+cd mobile
+cp .env.example .env
+# Editar .env con tu URL del backend
+```
+
+#### 3. ESP32
+
+> ⚠️ **Nota v1.0**: La configuración WiFi del ESP32 requiere compilación manual. 
+> Versiones futuras incluirán provisioning vía Bluetooth desde la app móvil.
+
+```bash
+cd esp32-idf
+cp config.example.h config.h
+# Editar config.h con tu WiFi y calibraciones
+```
+
+**Configuración requerida en `config.h`:**
+- `WIFI_SSID`: Nombre de tu red WiFi (debe ser 2.4GHz)
+- `WIFI_PASS`: Contraseña de tu red WiFi
+- `SERVER_URL`: URL del backend (por defecto Render)
+- Calibraciones de sensores (opcional, valores por defecto incluidos)
 
 ### Pasos de Instalación
 
-1. **Clonar el repositorio**
+#### Backend (Local)
 ```bash
-git clone https://github.com/tu-usuario/agromind.git
-cd agromind
+cd backend
+npm install
+npm run dev    # Puerto 5000
 ```
 
-2. **Levantar los contenedores**
+#### Mobile App
 ```bash
-docker-compose up --build -d
+cd mobile
+npm install
+npx expo start
+# Escanear QR code con Expo Go
 ```
 
-3. **Acceder a la aplicación**
-- Frontend (opcional/local): http://localhost:3000
-- Backend (Render): https://agromind-5hb1.onrender.com
-- Base de datos (Render PostgreSQL): provista vía `DATABASE_URL`
+#### ESP32 (ESP-IDF)
+Ver [ESP32_INTEGRATION.md](./ESP32_INTEGRATION.md) para instrucciones detalladas.
+
+### URLs de Acceso
+- **Backend (Render)**: https://agromind-5hb1.onrender.com/api
+- **Mobile**: Escanear QR con Expo Go
+- **ESP32 Local Server**: http://{esp32-ip}:80
 
 ### Usuario de Prueba
 ```
@@ -103,57 +151,85 @@ Password: test123
 
 ## 🎮 Uso
 
-### Crear una Nueva Zona
-1. Click en el dropdown de zonas (arriba izquierda)
-2. Click en "Nueva Zona"
-3. Ingresa nombre y tipo (Outdoor/Indoor/Greenhouse)
-4. Click en "Crear Zona"
+### 1. Crear una Nueva Zona (desde la App)
+1. Abrir app móvil y hacer login
+2. Tap en el botón "+"
+3. Completar nombre y tipo (Outdoor/Indoor/Greenhouse)
+4. Guardar zona
 
-### Configurar Riego por Zona
-1. Ve a **Configuración** desde el menú lateral
-2. Selecciona la zona a configurar
-3. Ajusta:
+### 2. Vincular ESP32 a una Zona
+1. Conectar ESP32 a la misma red WiFi
+2. En la app, ir a la zona recién creada
+3. Tap en "Vincular Dispositivo"
+4. La app descubre el ESP32 automáticamente
+5. Confirmar pairing
+6. El ESP32 comienza a enviar datos
+
+### 3. Configurar Riego Automático
+1. Ir a **Configuración** desde la zona
+2. Ajustar:
    - **Umbral de humedad**: % mínimo antes de regar
+   - **Duración de riego**: Segundos de riego
    - **Usar API de Clima**: Activar/desactivar integración meteorológica
    - **Respetar lluvia**: Cancelar riego si hay pronóstico de lluvia
 
-### Modo Automático
-1. En el dashboard, activa el switch "Modo Auto"
+### 4. Activar Modo Automático
+1. En el dashboard de la zona, activar switch "Modo Auto"
 2. El sistema regará automáticamente cuando:
    - La humedad caiga del umbral configurado
    - El tanque tenga suficiente agua
    - No haya pronóstico de lluvia (si está activado)
 
-### Eliminar Zona
-1. Click en el dropdown de zonas
-2. Click en el ícono de basura 🗑️ junto a la zona
-3. Confirma la eliminación
+### 5. Control Manual
+- Usar el botón de bomba en la app para encender/apagar manualmente
+- El modo manual tiene prioridad sobre el automático
 
 ## 🏗️ Arquitectura
 
 ```
 agromind/
-├── frontend/                 # React + Vite
-│   ├── src/
-│   │   ├── components/      # Componentes reutilizables
-│   │   ├── context/         # Context API (Auth, Theme)
-│   │   ├── pages/           # Páginas principales
-│   │   ├── services/        # API calls, weather service
-│   │   └── types/           # TypeScript interfaces
-│   ├── Dockerfile
-│   └── nginx.conf
+├── mobile/                  # React Native + Expo
+│   ├── app/                # Rutas y pantallas (Expo Router)
+│   │   ├── (tabs)/        # Navegación principal
+│   │   ├── login.tsx
+│   │   ├── add-zone.tsx
+│   │   └── ...
+│   ├── components/         # Componentes reutilizables
+│   ├── context/           # Context API (Auth, Theme)
+│   ├── services/          # API client, Weather
+│   ├── .env.example       # Template de configuración
+│   └── package.json
 │
-├── backend/                  # Node.js + Express
+├── backend/                # Node.js + Express (Render)
 │   ├── src/
-│   │   ├── config/          # Database config
-│   │   ├── models/          # Sequelize models
-│   │   ├── routes/          # API endpoints
-│   │   └── index.ts         # Entry point
-│   └── Dockerfile
+│   │   ├── config/        # Database config
+│   │   ├── models/        # Sequelize models (User, Zone)
+│   │   ├── routes/        # API endpoints
+│   │   │   ├── auth.ts
+│   │   │   ├── zones.ts
+│   │   │   └── iot.ts
+│   │   └── index.ts
+│   ├── .env.example
+│   └── package.json
 │
-├── docker-compose.yml        # Orquestación de servicios
-└── README.md
+├── esp32-idf/             # ESP-IDF para ESP32
+│   ├── main/
+│   │   └── main.cpp       # Código principal (1022 líneas)
+│   ├── components/        # Componentes ESP-IDF
+│   ├── config.example.h   # Template de configuración
+│   ├── CMakeLists.txt
+│   └── sdkconfig
+│
+├── docs/
+│   └── architecture.md    # Diagrama y detalles técnicos
+│
+├── .gitignore
+├── README.md
+├── ESP32_INTEGRATION.md
+└── TESTING_GUIDE.md
 ```
+
+Ver [diagrama completo de arquitectura](./docs/architecture.md)
 
 ## 🔌 API Endpoints
 
@@ -167,45 +243,31 @@ agromind/
 - `PUT /api/zones/:id` - Actualizar zona
 - `DELETE /api/zones/:id` - Eliminar zona
 
-## 🐳 Docker
-
-### Servicios
-- **frontend**: React app servido por Nginx (puerto 3000)
-- **backend**: API Node.js (puerto 5000)
-- **db**: PostgreSQL 15 (puerto 5432)
-
-### Comandos Útiles
-```bash
-# Levantar servicios
-docker-compose up -d
-
-# Ver logs
-docker-compose logs -f
-
-# Detener servicios
-docker-compose down
-
-# Reconstruir imágenes
-docker-compose up --build -d
-
-# Limpiar todo (incluye volumen de DB)
-docker-compose down -v
-```
+### IoT
+- `POST /api/iot/sensor-data` - Recibir datos del ESP32
 
 ## 🧪 Desarrollo
-
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
 
 ### Backend
 ```bash
 cd backend
 npm install
-npm run dev
+npm run dev    # http://localhost:5000
+```
+
+### Mobile
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+### ESP32
+```bash
+cd esp32-idf
+idf.py build
+idf.py flash
+idf.py monitor
 ```
 
 ## 📝 Modelos de Datos
@@ -215,7 +277,7 @@ npm run dev
 {
   id: number;
   email: string;
-  password: string;
+  password: string; // Hasheado
   name: string;
 }
 ```
@@ -228,26 +290,35 @@ npm run dev
   name: string;
   type: 'Outdoor' | 'Indoor' | 'Greenhouse';
   sensors: {
-    soilMoisture: number;
-    tankLevel: number;
-    temperature: number;
-    humidity: number;
-    lightLevel: number;
+    soilMoisture: number;       // 0-100%
+    tankLevel: number;          // 0-100%
+    temperature: number;        // °C
+    humidity: number;           // 0-100%
+    lightLevel: number;         // 0-100%
   };
   status: {
     pump: 'ON' | 'OFF';
     connection: 'ONLINE' | 'OFFLINE';
-    lastWatered: string;
+    lastWatered: string;        // ISO date
   };
   config: {
-    moistureThreshold: number;
-    wateringDuration: number;
+    moistureThreshold: number;  // %
+    wateringDuration: number;   // segundos
     autoMode: boolean;
     respectRainForecast: boolean;
     useWeatherApi: boolean;
   };
 }
 ```
+
+## 🔒 Seguridad
+
+- ✅ Variables de entorno para secretos
+- ✅ Templates `.env.example` versionados
+- ✅ `.gitignore` protege archivos sensibles
+- ✅ HTTPS entre ESP32 y backend
+- ✅ Autenticación JWT
+- ⚠️ ESP32 pairing local (HTTP en red privada)
 
 ## 🤝 Contribuir
 
@@ -268,8 +339,15 @@ Desarrollado con 💚 para la gestión inteligente de recursos hídricos
 ## 🙏 Agradecimientos
 
 - [OpenWeatherMap](https://openweathermap.org/) - API meteorológica
-- [Lucide Icons](https://lucide.dev/) - Iconos SVG
-- [Tailwind CSS](https://tailwindcss.com/) - Framework CSS
+- [Expo](https://expo.dev/) - Framework React Native
+- [Render](https://render.com/) - Cloud hosting
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) - Framework ESP32
+
+## 📚 Documentación Adicional
+
+- [ESP32 Integration Guide](./ESP32_INTEGRATION.md) - Configuración de hardware
+- [Testing Guide](./TESTING_GUIDE.md) - Guía de pruebas
+- [Architecture Diagram](./docs/architecture.md) - Diagrama detallado
 
 ---
 

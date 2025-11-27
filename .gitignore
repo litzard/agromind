@@ -20,6 +20,10 @@ logs/
 .env.local
 .env.*.local
 
+# ESP32 Configuration (contains WiFi credentials)
+**/config.h
+esp32-idf/config.h
+
 # IDE
 .vscode/
 .idea/

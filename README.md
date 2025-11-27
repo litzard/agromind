@@ -334,7 +334,7 @@ Este proyecto está bajo la Licencia MIT.
 
 ## 👨‍💻 Autor
 
-Desarrollado con 💚 para la gestión inteligente de recursos hídricos
+litzard
 
 ## 🙏 Agradecimientos
 

@@ -30,47 +30,61 @@ router.get('/:userId/statistics', async (req, res) => {
         });
 
         // Calcular estadísticas
-        const irrigationEvents = events.filter(e => 
-            e.type.includes('RIEGO') || e.type === 'IRRIGATION'
+        const irrigationStartEvents = events.filter(e => 
+            e.type === 'RIEGO_AUTO_INICIO' || 
+            e.type === 'RIEGO_MANUAL_INICIO' ||
+            e.type === 'RIEGO_MANUAL'
+        );
+        
+        const irrigationEndEvents = events.filter(e => 
+            e.type === 'RIEGO_AUTO_FIN' || 
+            e.type === 'RIEGO_MANUAL_FIN' ||
+            e.type === 'RIEGO_FIN'
         );
         
         const autoIrrigations = events.filter(e => 
-            e.type === 'RIEGO_AUTO' || e.type === 'AUTO_IRRIGATION'
+            e.type === 'RIEGO_AUTO_INICIO'
         );
 
         const manualIrrigations = events.filter(e => 
-            e.type === 'RIEGO_MANUAL_INICIO' || e.type === 'MANUAL_IRRIGATION'
+            e.type === 'RIEGO_MANUAL_INICIO' || e.type === 'RIEGO_MANUAL'
         );
 
         const configChanges = events.filter(e => 
-            e.type === 'CONFIG_CAMBIO' || e.type === 'CONFIG_CHANGE'
+            e.type === 'CONFIG_CAMBIO' || e.type === 'SCHEDULES_UPDATED'
         );
 
-        // Calcular agua usada (estimado basado en duración de riego)
+        const tankAlerts = events.filter(e => e.type === 'ALERTA_TANQUE');
+
+        // Calcular agua usada desde los eventos de fin de riego (tienen los litros reales)
         let totalWaterUsed = 0;
-        let waterSaved = 0;
+        let totalDurationSeconds = 0;
 
-        irrigationEvents.forEach(event => {
+        irrigationEndEvents.forEach(event => {
             const metadata = event.metadata as any;
-            const duration = metadata?.duration || metadata?.wateringDuration || 30;
-            // Estimación: 0.5 litros por segundo
-            totalWaterUsed += duration * 0.5;
-        });
-
-        // Obtener zonas para calcular ahorros potenciales
-        const zones = await Zone.findAll({ 
-            where: zoneId 
-                ? { id: parseInt(zoneId as string) }
-                : { userId: parseInt(userId) }
-        });
-
-        zones.forEach(zone => {
-            const config = zone.config as any;
-            if (config?.weatherAdjust) {
-                // Si tiene ajuste por clima, estimar 15% de ahorro
-                waterSaved += totalWaterUsed * 0.15;
+            if (metadata?.litersUsed) {
+                totalWaterUsed += metadata.litersUsed;
+            }
+            if (metadata?.durationSeconds) {
+                totalDurationSeconds += metadata.durationSeconds;
             }
         });
+
+        // Si no hay datos de litros en eventos, obtener de la zona
+        if (totalWaterUsed === 0) {
+            const zones = await Zone.findAll({ 
+                where: zoneId 
+                    ? { id: parseInt(zoneId as string) }
+                    : { userId: parseInt(userId) }
+            });
+            
+            zones.forEach(zone => {
+                const status = zone.status as any;
+                if (status?.totalWaterUsed) {
+                    totalWaterUsed += status.totalWaterUsed;
+                }
+            });
+        }
 
         // Agrupar riegos por día para gráfico
         const irrigationsByDay: { [key: string]: number } = {};
@@ -83,7 +97,7 @@ router.get('/:userId/statistics', async (req, res) => {
             irrigationsByDay[key] = 0;
         }
 
-        irrigationEvents.forEach(event => {
+        irrigationStartEvents.forEach(event => {
             const day = event.createdAt.toISOString().split('T')[0];
             if (irrigationsByDay[day] !== undefined) {
                 irrigationsByDay[day]++;
@@ -98,19 +112,24 @@ router.get('/:userId/statistics', async (req, res) => {
         }));
 
         // Calcular promedios
-        const avgDailyIrrigations = irrigationEvents.length / parseInt(days as string);
+        const totalIrrigations = irrigationStartEvents.length;
+        const avgDailyIrrigations = totalIrrigations / parseInt(days as string);
         const avgWaterPerDay = totalWaterUsed / parseInt(days as string);
+
+        // Calcular tiempo total en minutos
+        const totalDurationMinutes = Math.round(totalDurationSeconds / 60);
 
         res.json({
             summary: {
-                totalIrrigations: irrigationEvents.length,
+                totalIrrigations,
                 autoIrrigations: autoIrrigations.length,
                 manualIrrigations: manualIrrigations.length,
                 configChanges: configChanges.length,
-                totalWaterUsed: Math.round(totalWaterUsed * 10) / 10,
-                waterSaved: Math.round(waterSaved * 10) / 10,
+                tankAlerts: tankAlerts.length,
+                totalWaterUsed: Math.round(totalWaterUsed * 100) / 100,
+                totalDurationMinutes,
                 avgDailyIrrigations: Math.round(avgDailyIrrigations * 10) / 10,
-                avgWaterPerDay: Math.round(avgWaterPerDay * 10) / 10,
+                avgWaterPerDay: Math.round(avgWaterPerDay * 100) / 100,
             },
             dailyIrrigations,
             recentEvents: events.slice(0, 10).map(e => ({

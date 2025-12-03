@@ -112,8 +112,10 @@ export interface Event {
     type: 'irrigation_start' | 'irrigation_end' | 'pump_locked' | 'pump_unlocked' | 
           'zone_created' | 'zone_deleted' | 'sensor_alert' | 'connection_lost' | 
           'connection_restored' | 'schedule_triggered' | 'vacation_mode_enabled' | 
-          'vacation_mode_disabled' | 'RIEGO_MANUAL' | 'RIEGO_AUTO_INICIO' | 
-          'RIEGO_AUTO_FIN' | 'RIEGO_FIN' | 'ALERTA_TANQUE';
+          'vacation_mode_disabled' | 'RIEGO_MANUAL' | 'RIEGO_MANUAL_INICIO' | 
+          'RIEGO_MANUAL_FIN' | 'RIEGO_AUTO_INICIO' | 'RIEGO_AUTO_FIN' | 'RIEGO_FIN' | 
+          'ALERTA_TANQUE' | 'CONFIG_CAMBIO' | 'SCHEDULES_UPDATED' | 'ZONA_CREADA' |
+          'VACATION_MODE_ON' | 'VACATION_MODE_OFF';
     description: string;
     timestamp: string;
     zoneId: number;

@@ -1,12 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Activity, ChevronUp, Droplets, Clock, 
-  ChevronDown, Zap, Check, Home, Leaf, Settings
+  ChevronDown, Zap, Check, Home, Leaf, Settings, AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_CONFIG } from '../config/api';
 import AnimatedBackground from '../components/AnimatedBackground';
 import type { Zone, Event } from '../types';
+
+interface StatisticsData {
+  summary: {
+    totalIrrigations: number;
+    autoIrrigations: number;
+    manualIrrigations: number;
+    configChanges: number;
+    tankAlerts: number;
+    totalWaterUsed: number;
+    totalDurationMinutes: number;
+    avgDailyIrrigations: number;
+    avgWaterPerDay: number;
+  };
+  dailyIrrigations: { date: string; day: string; count: number }[];
+  recentEvents: Event[];
+  period: { days: number; from: string; to: string };
+}
 
 // Simple line chart component
 const MiniLineChart = ({ data, color = '#10B981', height = 60 }: { data: number[]; color?: string; height?: number }) => {
@@ -129,7 +146,7 @@ const Statistics: React.FC = () => {
   const { user } = useAuth();
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
-  const [events, setEvents] = useState<Event[]>([]);
+  const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showZoneDropdown, setShowZoneDropdown] = useState(false);
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('7d');
@@ -157,84 +174,48 @@ const Statistics: React.FC = () => {
     loadData();
   }, [user?.id]);
 
-  // Cargar eventos cuando cambia la zona
+  // Cargar estadísticas cuando cambia la zona o el rango de tiempo
   useEffect(() => {
-    const loadEvents = async () => {
-      if (!selectedZone) return;
+    const loadStatistics = async () => {
+      if (!user?.id) return;
 
       try {
-        const eventsRes = await fetch(`${API_CONFIG.BASE_URL}/events/${selectedZone.id}?limit=100`);
-        if (eventsRes.ok) {
-          const eventsData = await eventsRes.json();
-          setEvents(eventsData);
+        const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+        const url = selectedZone 
+          ? `${API_CONFIG.BASE_URL}/events/${user.id}/statistics?days=${days}&zoneId=${selectedZone.id}`
+          : `${API_CONFIG.BASE_URL}/events/${user.id}/statistics?days=${days}`;
+        
+        const statsRes = await fetch(url);
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setStatistics(statsData);
         }
       } catch (error) {
-        console.error('Error cargando eventos:', error);
+        console.error('Error cargando estadísticas:', error);
       }
     };
 
-    loadEvents();
-  }, [selectedZone?.id]);
+    loadStatistics();
+  }, [user?.id, selectedZone?.id, timeRange]);
 
-  // Calcular estadísticas
-  const stats = React.useMemo(() => {
-    const now = new Date();
-    const daysAgo = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
-    const startDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+  // Datos para los gráficos
+  const chartData = React.useMemo(() => {
+    if (!statistics) {
+      return {
+        irrigationsByDay: Array(7).fill(0),
+        dayNames: ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'],
+      };
+    }
 
-    const relevantEvents = events.filter(e => new Date(e.timestamp) >= startDate);
-    
-    // Filtrar eventos de riego
-    const irrigationEvents = relevantEvents.filter(e => 
-      e.type === 'irrigation_start' || 
-      e.type === 'RIEGO_MANUAL' || 
-      e.type === 'RIEGO_AUTO_INICIO'
-    );
-    
-    // Contar riegos manuales y automáticos
-    const manualIrrigations = relevantEvents.filter(e => 
-      e.type === 'RIEGO_MANUAL' || 
-      (e.type === 'irrigation_start' && !(e.metadata as any)?.automatic)
-    ).length;
-    
-    const autoIrrigations = relevantEvents.filter(e => 
-      e.type === 'RIEGO_AUTO_INICIO' || 
-      (e.type === 'irrigation_start' && (e.metadata as any)?.automatic)
-    ).length;
-
-    // Riegos por día de la semana
-    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    const irrigationsByDay = Array(7).fill(0);
-    irrigationEvents.forEach(e => {
-      const day = new Date(e.timestamp).getDay();
-      irrigationsByDay[day]++;
-    });
-
-    // Sparkline para riegos manuales y automáticos (últimos 7 días)
-    const manualByDay = Array(7).fill(0);
-    const autoByDay = Array(7).fill(0);
-    
-    relevantEvents.forEach(e => {
-      const day = new Date(e.timestamp).getDay();
-      if (e.type === 'RIEGO_MANUAL' || (e.type === 'irrigation_start' && !(e.metadata as any)?.automatic)) {
-        manualByDay[day]++;
-      } else if (e.type === 'RIEGO_AUTO_INICIO' || (e.type === 'irrigation_start' && (e.metadata as any)?.automatic)) {
-        autoByDay[day]++;
-      }
-    });
+    // Crear array de datos por día de la semana desde dailyIrrigations
+    const dayNames = statistics.dailyIrrigations.map(d => d.day);
+    const irrigationsByDay = statistics.dailyIrrigations.map(d => d.count);
 
     return {
-      totalIrrigations: irrigationEvents.length,
-      avgPerDay: Math.round((irrigationEvents.length / daysAgo) * 10) / 10, // Redondear a 1 decimal
-      waterSaved: Math.round(irrigationEvents.length * 2.5), // Redondear litros
-      manualIrrigations,
-      autoIrrigations,
       irrigationsByDay,
       dayNames,
-      manualSparkline: manualByDay,
-      autoSparkline: autoByDay,
     };
-  }, [events, selectedZone, timeRange]);
+  }, [statistics]);
 
   if (loading) {
     return (
@@ -328,32 +309,53 @@ const Statistics: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Riegos"
-          value={stats.totalIrrigations}
+          value={statistics?.summary.totalIrrigations || 0}
           icon={Droplets}
           color="emerald"
-          trend={{ value: 12, positive: true }}
-          sparkline={stats.irrigationsByDay}
+          sparkline={chartData.irrigationsByDay}
         />
         <StatCard
           title="Promedio Diario"
-          value={stats.avgPerDay}
+          value={statistics?.summary.avgDailyIrrigations || 0}
           unit="riegos/día"
           icon={Clock}
           color="blue"
         />
         <StatCard
           title="Riegos Manuales"
-          value={stats.manualIrrigations}
+          value={statistics?.summary.manualIrrigations || 0}
           icon={Zap}
           color="orange"
-          sparkline={stats.manualSparkline}
         />
         <StatCard
           title="Riegos Automáticos"
-          value={stats.autoIrrigations}
+          value={statistics?.summary.autoIrrigations || 0}
           icon={Settings}
           color="purple"
-          sparkline={stats.autoSparkline}
+        />
+      </div>
+
+      {/* Water Stats Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard
+          title="Agua Utilizada"
+          value={statistics?.summary.totalWaterUsed || 0}
+          unit="litros"
+          icon={Droplets}
+          color="blue"
+        />
+        <StatCard
+          title="Tiempo Total Riego"
+          value={statistics?.summary.totalDurationMinutes || 0}
+          unit="minutos"
+          icon={Clock}
+          color="emerald"
+        />
+        <StatCard
+          title="Alertas de Tanque"
+          value={statistics?.summary.tankAlerts || 0}
+          icon={AlertTriangle}
+          color="orange"
         />
       </div>
 
@@ -364,13 +366,13 @@ const Statistics: React.FC = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="font-bold text-gray-900 dark:text-white">Riegos por Día</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Distribución semanal</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Últimos 7 días</p>
             </div>
             <div className="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center">
               <Activity size={20} className="text-emerald-600" />
             </div>
           </div>
-          <BarChart data={stats.irrigationsByDay} labels={stats.dayNames} />
+          <BarChart data={chartData.irrigationsByDay} labels={chartData.dayNames} />
         </div>
 
         {/* Recent Activity */}
@@ -386,13 +388,34 @@ const Statistics: React.FC = () => {
           </div>
           
           <div className="space-y-3 max-h-48 overflow-y-auto">
-            {events.slice(0, 5).map((event, index) => {
+            {statistics?.recentEvents.slice(0, 5).map((event, index) => {
               const getEventIcon = () => {
+                if (event.type.includes('INICIO') || event.type === 'RIEGO_MANUAL') {
+                  return <Droplets size={16} className="text-emerald-500" />;
+                }
+                if (event.type.includes('FIN')) {
+                  return <Check size={16} className="text-blue-500" />;
+                }
+                if (event.type.includes('ALERTA')) {
+                  return <AlertTriangle size={16} className="text-orange-500" />;
+                }
+                if (event.type.includes('CONFIG') || event.type.includes('SCHEDULES')) {
+                  return <Settings size={16} className="text-purple-500" />;
+                }
+                return <Activity size={16} className="text-gray-400" />;
+              };
+
+              const getEventLabel = () => {
                 switch (event.type) {
-                  case 'irrigation_start': return <Droplets size={16} className="text-emerald-500" />;
-                  case 'irrigation_end': return <Check size={16} className="text-blue-500" />;
-                  case 'pump_locked': return <Zap size={16} className="text-red-500" />;
-                  default: return <Activity size={16} className="text-gray-400" />;
+                  case 'RIEGO_MANUAL_INICIO': return 'Riego manual iniciado';
+                  case 'RIEGO_MANUAL_FIN': return 'Riego manual finalizado';
+                  case 'RIEGO_AUTO_INICIO': return 'Riego automático iniciado';
+                  case 'RIEGO_AUTO_FIN': return 'Riego automático finalizado';
+                  case 'ALERTA_TANQUE': return 'Alerta de tanque';
+                  case 'CONFIG_CAMBIO': return 'Configuración actualizada';
+                  case 'SCHEDULES_UPDATED': return 'Horarios actualizados';
+                  case 'ZONA_CREADA': return 'Zona creada';
+                  default: return event.description || event.type;
                 }
               };
 
@@ -402,7 +425,7 @@ const Statistics: React.FC = () => {
                     {getEventIcon()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 dark:text-white truncate">{event.description}</p>
+                    <p className="text-sm font-medium text-gray-800 dark:text-white truncate">{getEventLabel()}</p>
                     <p className="text-xs text-gray-400">
                       {new Date(event.timestamp).toLocaleString('es-ES', { 
                         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
@@ -413,7 +436,7 @@ const Statistics: React.FC = () => {
               );
             })}
             
-            {events.length === 0 && (
+            {(!statistics?.recentEvents || statistics.recentEvents.length === 0) && (
               <div className="text-center py-8">
                 <Activity size={32} className="mx-auto text-gray-300 dark:text-gray-600 mb-2" />
                 <p className="text-sm text-gray-500 dark:text-gray-400">Sin eventos registrados</p>
@@ -423,17 +446,17 @@ const Statistics: React.FC = () => {
         </div>
       </div>
 
-      {/* Water Savings Insight */}
+      {/* Water Usage Summary */}
       <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-2xl p-6 text-white">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-emerald-100 text-sm font-medium mb-1">Ahorro estimado de agua</p>
+            <p className="text-emerald-100 text-sm font-medium mb-1">Consumo total de agua</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-extrabold">{stats.waterSaved}</span>
+              <span className="text-4xl font-extrabold">{statistics?.summary.totalWaterUsed || 0}</span>
               <span className="text-emerald-100">litros</span>
             </div>
             <p className="text-emerald-100 text-sm mt-2">
-              Gracias al riego inteligente basado en sensores y clima
+              En {statistics?.summary.totalDurationMinutes || 0} minutos de riego • {statistics?.summary.totalIrrigations || 0} sesiones
             </p>
           </div>
           <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-4">

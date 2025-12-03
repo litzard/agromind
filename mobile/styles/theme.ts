@@ -51,10 +51,20 @@ export const Colors = {
     },
     orange: {
         50: '#FFF7ED',
+        100: '#FFEDD5',
         200: '#FED7AA',
         400: '#FB923C',
         500: '#F97316',
+        600: '#EA580C',
         700: '#C2410C',
+    },
+    amber: {
+        50: '#FFFBEB',
+        100: '#FEF3C7',
+        200: '#FDE68A',
+        400: '#FBBF24',
+        500: '#F59E0B',
+        600: '#D97706',
     },
     yellow: {
         50: '#FEFCE8',
@@ -63,8 +73,19 @@ export const Colors = {
     },
     purple: {
         50: '#F5F3FF',
+        200: '#DDD6FE',
         500: '#8B5CF6',
         600: '#7C3AED',
+    },
+    green: {
+        50: '#F0FDF4',
+        500: '#22C55E',
+        600: '#16A34A',
+    },
+    indigo: {
+        50: '#EEF2FF',
+        500: '#6366F1',
+        600: '#4F46E5',
     },
     navy: {
         800: '#111827', // Dark button color

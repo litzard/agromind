@@ -130,6 +130,46 @@ router.put('/:id', async (req: Request, res: Response) => {
           { wateringDuration: newConfig.wateringDuration }
         );
       }
+
+      // Cambio de modo vacaciones
+      if (oldConfig?.vacationMode?.enabled !== newConfig.vacationMode?.enabled) {
+        await createEvent(
+          zone.userId,
+          zone.id,
+          newConfig.vacationMode?.enabled ? 'VACATION_MODE_ON' : 'VACATION_MODE_OFF',
+          newConfig.vacationMode?.enabled 
+            ? `Modo vacaciones activado en ${zone.name}`
+            : `Modo vacaciones desactivado en ${zone.name}`,
+          { 
+            vacationMode: newConfig.vacationMode,
+            startDate: newConfig.vacationMode?.startDate,
+            endDate: newConfig.vacationMode?.endDate,
+            reductionPercent: newConfig.vacationMode?.reductionPercent
+          }
+        );
+      }
+
+      // Cambios en horarios programados
+      const oldSchedules = oldConfig?.schedules || [];
+      const newSchedules = newConfig.schedules || [];
+      
+      if (JSON.stringify(oldSchedules) !== JSON.stringify(newSchedules)) {
+        const added = newSchedules.length - oldSchedules.length;
+        await createEvent(
+          zone.userId,
+          zone.id,
+          'SCHEDULES_UPDATED',
+          added > 0 
+            ? `${added} horario(s) agregado(s) en ${zone.name}`
+            : added < 0 
+              ? `${Math.abs(added)} horario(s) eliminado(s) en ${zone.name}`
+              : `Horarios actualizados en ${zone.name}`,
+          { 
+            schedulesCount: newSchedules.length,
+            schedules: newSchedules 
+          }
+        );
+      }
     }
 
     res.json(zone);

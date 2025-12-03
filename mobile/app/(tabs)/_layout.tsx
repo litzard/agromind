@@ -32,6 +32,24 @@ export default function TabLayout() {
                 }}
             />
             <Tabs.Screen
+                name="statistics"
+                options={{
+                    title: 'Estadísticas',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="bar-chart-outline" size={size} color={color} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="schedules"
+                options={{
+                    title: 'Horarios',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="calendar-outline" size={size} color={color} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
                 name="history"
                 options={{
                     title: 'Historial',
@@ -43,7 +61,7 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="configuration"
                 options={{
-                    title: 'Configuración',
+                    title: 'Ajustes',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="settings-outline" size={size} color={color} />
                     ),

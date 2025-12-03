@@ -476,7 +476,7 @@ export default function AddZoneScreen() {
                 </View>
 
                 <View style={styles.formSection}>
-                    <Text style={styles.label}>IP del ESP32 (opcional)</Text>
+                    <Text style={styles.label}>IP del ESP32</Text>
                     <View style={styles.espCard}>
                         <Text style={styles.espDescription}>
                             Si conoces la IP del ESP32, ingrésala aquí. Si no, se buscará automáticamente en la red.

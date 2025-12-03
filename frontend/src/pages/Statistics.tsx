@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Activity, ChevronUp, Droplets, Thermometer, Clock, 
-  ChevronDown, Zap, Check, Home, Leaf
+  Activity, ChevronUp, Droplets, Clock, 
+  ChevronDown, Zap, Check, Home, Leaf, Settings
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_CONFIG } from '../config/api';
+import AnimatedBackground from '../components/AnimatedBackground';
 import type { Zone, Event } from '../types';
 
 // Simple line chart component
@@ -182,7 +183,24 @@ const Statistics: React.FC = () => {
     const startDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
 
     const relevantEvents = events.filter(e => new Date(e.timestamp) >= startDate);
-    const irrigationEvents = relevantEvents.filter(e => e.type === 'irrigation_start');
+    
+    // Filtrar eventos de riego
+    const irrigationEvents = relevantEvents.filter(e => 
+      e.type === 'irrigation_start' || 
+      e.type === 'RIEGO_MANUAL' || 
+      e.type === 'RIEGO_AUTO_INICIO'
+    );
+    
+    // Contar riegos manuales y automáticos
+    const manualIrrigations = relevantEvents.filter(e => 
+      e.type === 'RIEGO_MANUAL' || 
+      (e.type === 'irrigation_start' && !(e.metadata as any)?.automatic)
+    ).length;
+    
+    const autoIrrigations = relevantEvents.filter(e => 
+      e.type === 'RIEGO_AUTO_INICIO' || 
+      (e.type === 'irrigation_start' && (e.metadata as any)?.automatic)
+    ).length;
 
     // Riegos por día de la semana
     const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -192,23 +210,29 @@ const Statistics: React.FC = () => {
       irrigationsByDay[day]++;
     });
 
-    // Generar datos de ejemplo para sparklines (en producción vendría del backend)
-    const generateSparkline = (base: number, variance: number) => {
-      return Array.from({ length: 7 }, () => 
-        Math.max(0, base + (Math.random() - 0.5) * variance * 2)
-      );
-    };
+    // Sparkline para riegos manuales y automáticos (últimos 7 días)
+    const manualByDay = Array(7).fill(0);
+    const autoByDay = Array(7).fill(0);
+    
+    relevantEvents.forEach(e => {
+      const day = new Date(e.timestamp).getDay();
+      if (e.type === 'RIEGO_MANUAL' || (e.type === 'irrigation_start' && !(e.metadata as any)?.automatic)) {
+        manualByDay[day]++;
+      } else if (e.type === 'RIEGO_AUTO_INICIO' || (e.type === 'irrigation_start' && (e.metadata as any)?.automatic)) {
+        autoByDay[day]++;
+      }
+    });
 
     return {
       totalIrrigations: irrigationEvents.length,
-      avgPerDay: (irrigationEvents.length / daysAgo).toFixed(1),
-      waterSaved: Math.round(irrigationEvents.length * 2.5), // Estimación litros
-      avgMoisture: selectedZone?.sensors?.soilMoisture ?? '--',
-      avgTemperature: selectedZone?.sensors?.temperature ?? '--',
+      avgPerDay: Math.round((irrigationEvents.length / daysAgo) * 10) / 10, // Redondear a 1 decimal
+      waterSaved: Math.round(irrigationEvents.length * 2.5), // Redondear litros
+      manualIrrigations,
+      autoIrrigations,
       irrigationsByDay,
       dayNames,
-      moistureSparkline: generateSparkline(45, 15),
-      temperatureSparkline: generateSparkline(25, 5),
+      manualSparkline: manualByDay,
+      autoSparkline: autoByDay,
     };
   }, [events, selectedZone, timeRange]);
 
@@ -233,7 +257,9 @@ const Statistics: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <>
+      <AnimatedBackground />
+      <div className="space-y-6 animate-fade-in relative">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -316,20 +342,18 @@ const Statistics: React.FC = () => {
           color="blue"
         />
         <StatCard
-          title="Humedad Actual"
-          value={stats.avgMoisture}
-          unit="%"
-          icon={Droplets}
-          color="emerald"
-          sparkline={stats.moistureSparkline}
+          title="Riegos Manuales"
+          value={stats.manualIrrigations}
+          icon={Zap}
+          color="orange"
+          sparkline={stats.manualSparkline}
         />
         <StatCard
-          title="Temperatura"
-          value={stats.avgTemperature}
-          unit="°C"
-          icon={Thermometer}
-          color="orange"
-          sparkline={stats.temperatureSparkline}
+          title="Riegos Automáticos"
+          value={stats.autoIrrigations}
+          icon={Settings}
+          color="purple"
+          sparkline={stats.autoSparkline}
         />
       </div>
 
@@ -417,7 +441,8 @@ const Statistics: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

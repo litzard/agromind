@@ -25,6 +25,13 @@ export const authApi = {
 
     if (!response.ok) {
       const error = await response.json();
+      // Si la cuenta no está verificada, incluir esa info en el error
+      if (error.needsVerification) {
+        const err: any = new Error(error.error || 'Cuenta no verificada');
+        err.needsVerification = true;
+        err.email = error.email;
+        throw err;
+      }
       throw new Error(error.error || 'Error al iniciar sesión');
     }
 

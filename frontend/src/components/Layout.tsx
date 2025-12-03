@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Settings, Clock, Leaf, Bell, User, LogOut, AlertTriangle, Droplets, ChevronDown, Menu, X, Activity, Clock as CalendarIcon } from 'lucide-react';
+import { Home, Leaf, Bell, User, LogOut, AlertTriangle, Droplets, ChevronDown, Menu, X, Activity, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -22,20 +22,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const sidebarNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
     { name: 'Estadísticas', href: '/statistics', icon: Activity },
-    { name: 'Horarios', href: '/schedules', icon: CalendarIcon },
-    { name: 'Historial', href: '/history', icon: Clock },
-    { name: 'Configuración', href: '/config', icon: Settings },
+    { name: 'Horarios', href: '/schedules', icon: Clock },
   ];
 
   const publicNavigation = [
     { name: 'Inicio', href: '/' },
-    { name: 'Características', href: '/features' },
     { name: 'Sobre Nosotros', href: '/about' },
-    { name: 'Contacto', href: '/contact' },
   ];
 
-  const isDashboardSection = ['/dashboard', '/statistics', '/schedules', '/history', '/config', '/profile'].includes(location.pathname);
-  const isPublicPage = ['/', '/features', '/about', '/contact'].includes(location.pathname);
+  const isDashboardSection = ['/dashboard', '/statistics', '/schedules', '/profile'].includes(location.pathname);
+  const isPublicPage = ['/', '/about'].includes(location.pathname);
   const unreadCount = notifications?.filter(n => !n.read).length || 0;
 
   useEffect(() => {
@@ -53,11 +49,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, []);
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+    <div className={`min-h-screen ${darkMode ? 'dark' : ''}`}>
       {/* Sidebar - Only visible on dashboard sections */}
       {isDashboardSection && (
         <div className="hidden md:flex md:w-64 md:flex-col fixed h-full z-30 pt-16">
-          <div className="flex flex-col grow pt-6 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 overflow-y-auto">
+          <div className="flex flex-col grow pt-6 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl border-r border-white/30 dark:border-gray-700/50 overflow-y-auto">
             {/* Navigation */}
             <nav className="flex-1 px-4 space-y-1">
               {sidebarNavigation.map((item) => {
@@ -68,8 +64,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     to={item.href}
                     className={`group flex items-center px-4 py-3 text-sm font-medium rounded-xl transition-all ${
                       isActive
-                        ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
-                        : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white'
+                        ? 'bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 shadow-sm'
+                        : 'text-gray-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
                     }`}
                   >
                     <item.icon
@@ -87,7 +83,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </nav>
             
             {/* Status */}
-            <div className="mx-4 mb-6 px-4 py-3 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl">
+            <div className="mx-4 mb-6 px-4 py-3 bg-emerald-100/60 dark:bg-emerald-900/40 backdrop-blur-sm rounded-xl border border-emerald-200/50 dark:border-emerald-800/50">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                 <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Sistema conectado</span>
@@ -98,10 +94,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       )}
 
       {/* Top Navbar */}
-      <nav className={`fixed top-0 left-0 right-0 z-50 backdrop-blur-lg border-b ${
+      <nav className={`fixed top-0 left-0 right-0 z-50 backdrop-blur-xl border-b ${
         darkMode 
-          ? 'bg-gray-900/80 border-gray-700' 
-          : 'bg-white/80 border-gray-100'
+          ? 'bg-gray-900/70 border-white/10' 
+          : 'bg-white/70 border-white/30'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -124,7 +120,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400'
                       : darkMode
                         ? 'text-gray-300 hover:text-white hover:bg-gray-700'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
                   }`}
                 >
                   {item.name}
@@ -176,8 +172,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </button>
                     
                     {showNotifications && (
-                      <div className={`absolute right-0 mt-2 w-80 rounded-2xl shadow-xl border overflow-hidden animate-fade-in z-50 ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
+                      <div className={`absolute right-0 mt-2 w-80 rounded-2xl shadow-2xl border overflow-hidden animate-fade-in z-50 backdrop-blur-xl ${
+                        darkMode ? 'bg-gray-800/90 border-white/10' : 'bg-white/90 border-white/50'
                       }`}>
                         <div className={`px-4 py-3 border-b flex justify-between items-center ${
                           darkMode ? 'border-gray-700' : 'border-gray-100'
@@ -247,8 +243,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </button>
 
                     {showUserMenu && (
-                      <div className={`absolute right-0 mt-2 w-64 rounded-2xl shadow-xl border overflow-hidden animate-fade-in z-50 ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
+                      <div className={`absolute right-0 mt-2 w-64 rounded-2xl shadow-2xl border overflow-hidden animate-fade-in z-50 backdrop-blur-xl ${
+                        darkMode ? 'bg-gray-800/90 border-white/10' : 'bg-white/90 border-white/50'
                       }`}>
                         {/* Profile Header with Gradient */}
                         <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 p-4">
@@ -269,7 +265,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                             to="/profile"
                             onClick={() => setShowUserMenu(false)}
                             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                              darkMode ? 'text-gray-200 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'
+                              darkMode ? 'text-gray-200 hover:bg-white/10' : 'text-gray-700 hover:bg-black/5'
                             }`}
                           >
                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
@@ -278,20 +274,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                               <User size={16} className={darkMode ? 'text-blue-400' : 'text-blue-600'} />
                             </div>
                             <span>Mi Perfil</span>
-                          </Link>
-                          <Link 
-                            to="/config"
-                            onClick={() => setShowUserMenu(false)}
-                            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                              darkMode ? 'text-gray-200 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'
-                            }`}
-                          >
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              darkMode ? 'bg-emerald-900/30' : 'bg-emerald-100'
-                            }`}>
-                              <Settings size={16} className={darkMode ? 'text-emerald-400' : 'text-emerald-600'} />
-                            </div>
-                            <span>Configuración</span>
                           </Link>
                         </div>
                         
@@ -351,10 +333,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         {/* Mobile Navigation Dropdown */}
         {mobileMenuOpen && (
-          <div className={`md:hidden border-t py-4 px-4 animate-fade-in ${
+          <div className={`md:hidden border-t py-4 px-4 animate-fade-in backdrop-blur-xl ${
             darkMode
-              ? 'bg-gray-900 border-gray-700'
-              : 'bg-white border-gray-100'
+              ? 'bg-gray-900/90 border-white/10'
+              : 'bg-white/90 border-white/30'
           }`}>
             <div className="space-y-1 mb-4">
               <p className="text-xs font-semibold text-gray-400 uppercase px-3 mb-2">Páginas</p>
@@ -365,10 +347,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   onClick={() => setMobileMenuOpen(false)}
                   className={`block px-4 py-3 rounded-xl text-base font-medium transition-colors ${
                     location.pathname === item.href
-                      ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400'
+                      ? 'text-emerald-600 bg-emerald-100/80 dark:bg-emerald-900/40 dark:text-emerald-400'
                       : darkMode
-                        ? 'text-gray-300 hover:bg-gray-700'
-                        : 'text-gray-600 hover:bg-gray-50'
+                        ? 'text-gray-300 hover:bg-white/10'
+                        : 'text-gray-600 hover:bg-black/5'
                   }`}
                 >
                   {item.name}
@@ -377,7 +359,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
             
             {isAuthenticated ? (
-              <div className="space-y-1 pt-4 border-t border-gray-100 dark:border-gray-700">
+              <div className="space-y-1 pt-4 border-t border-gray-100/50 dark:border-gray-700/50">
                 <p className="text-xs font-semibold text-gray-400 uppercase px-3 mb-2">Dashboard</p>
                 {sidebarNavigation.map((item) => (
                   <Link
@@ -386,10 +368,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     onClick={() => setMobileMenuOpen(false)}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl text-base font-medium transition-colors ${
                       location.pathname === item.href
-                        ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400'
+                        ? 'text-emerald-600 bg-emerald-100/80 dark:bg-emerald-900/40 dark:text-emerald-400'
                         : darkMode
-                          ? 'text-gray-300 hover:bg-gray-700'
-                          : 'text-gray-600 hover:bg-gray-50'
+                          ? 'text-gray-300 hover:bg-white/10'
+                          : 'text-gray-600 hover:bg-black/5'
                     }`}
                   >
                     <item.icon size={20} />
@@ -465,9 +447,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <div>
                 <h4 className="font-semibold mb-4">Producto</h4>
                 <ul className="space-y-2">
-                  <li><Link to="/features" className="text-gray-400 hover:text-white transition-colors">Características</Link></li>
                   <li><Link to="/about" className="text-gray-400 hover:text-white transition-colors">Sobre Nosotros</Link></li>
-                  <li><Link to="/contact" className="text-gray-400 hover:text-white transition-colors">Contacto</Link></li>
+                  <li><Link to="/register" className="text-gray-400 hover:text-white transition-colors">Registrarse</Link></li>
+                  <li><Link to="/login" className="text-gray-400 hover:text-white transition-colors">Iniciar Sesión</Link></li>
                 </ul>
               </div>
 

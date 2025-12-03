@@ -4,6 +4,7 @@ import {
   Sun as VacationIcon, Home, Leaf, ChevronDown, Save, Loader2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import AnimatedBackground from '../components/AnimatedBackground';
 import { API_CONFIG } from '../config/api';
 import type { Zone, WateringSchedule, VacationMode } from '../types';
 
@@ -312,9 +313,11 @@ const Schedules: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <>
+      <AnimatedBackground />
+      <div className="relative z-10 space-y-6 animate-fade-in">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white tracking-tight">Horarios</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Programa riegos automáticos</p>
@@ -487,7 +490,8 @@ const Schedules: React.FC = () => {
           <><Save size={20} /> Guardar Cambios</>
         )}
       </button>
-    </div>
+      </div>
+    </>
   );
 };
 

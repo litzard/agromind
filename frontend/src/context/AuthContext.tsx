@@ -74,14 +74,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (email: string, password: string, name: string) => {
-    const userData = await authApi.register({ email, password, name });
-    const userWithType: User = {
-      id: userData.id,
-      name: userData.name,
-      email: userData.email
-    };
-    setUser(userWithType);
-    localStorage.setItem('agromind_user', JSON.stringify(userWithType));
+    // Solo registrar, no hacer login automático
+    // El usuario debe verificar su correo primero
+    await authApi.register({ email, password, name });
   };
 
   const logout = () => {

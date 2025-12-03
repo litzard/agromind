@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Lock, ArrowLeft, Check, AlertCircle, Moon, Bell, ChevronRight, LogOut, User, Mail } from 'lucide-react';
+import { Lock, ArrowLeft, Check, AlertCircle, Moon, ChevronRight, LogOut, User, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { authApi } from '../services/api';
 import { Link } from 'react-router-dom';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 const Profile: React.FC = () => {
   const { user, updateUser, logout } = useAuth();
@@ -70,11 +71,13 @@ const Profile: React.FC = () => {
   };
 
   return (
-    <div className="animate-fade-in-up">
-      {/* Header */}
-      <div className="flex items-center gap-4 mb-8">
+    <>
+      <AnimatedBackground />
+      <div className="relative z-10 animate-fade-in-up">
+        {/* Header */}
+        <div className="flex items-center gap-4 mb-8">
         <Link 
-          to="/"
+          to="/dashboard"
           className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors"
         >
           <ArrowLeft size={20} className="text-gray-600 dark:text-gray-400" />
@@ -133,13 +136,13 @@ const Profile: React.FC = () => {
               </div>
               <button
                 onClick={toggleDarkMode}
-                className={`relative w-11 h-6 rounded-full transition-colors ${
+                className={`relative w-12 h-7 rounded-full transition-colors flex items-center px-0.5 ${
                   darkMode ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
                 }`}
               >
                 <span
-                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                    darkMode ? 'translate-x-5' : 'translate-x-0.5'
+                  className={`w-6 h-6 bg-white rounded-full shadow-md transition-transform duration-200 ${
+                    darkMode ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
               </button>
@@ -206,15 +209,6 @@ const Profile: React.FC = () => {
                       placeholder="tu@email.com"
                     />
                   </div>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-gray-400">#</span>
-                  <span className="text-gray-500 dark:text-gray-400">
-                    ID de usuario: <span className="font-mono text-gray-700 dark:text-gray-300">{user?.id ? `#${String(user.id).substring(0, 8)}` : '#00000000'}</span>
-                  </span>
                 </div>
               </div>
 
@@ -327,7 +321,8 @@ const Profile: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

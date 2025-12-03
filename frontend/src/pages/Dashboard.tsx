@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
-  Droplets, Thermometer, Sun, CloudRain, Activity, Zap, 
-  AlertTriangle, ChevronDown, Plus, Trash2, Home, Leaf, Cloud, Lock, Check, Settings
+  Droplets, Thermometer, Activity, Zap, Cloud,
+  ChevronDown, Plus, Trash2, Home, Leaf, Lock, Check, Settings
 } from 'lucide-react';
 import { getExtendedForecast, getUserLocation, type WeatherData } from '../services/weatherService';
 import type { DailyForecast } from '../types';
@@ -12,6 +12,7 @@ import esp32Service from '../services/esp32Service';
 import AddZoneModal from '../components/AddZoneModal';
 import ZoneConfigModal from '../components/ZoneConfigModal';
 import WeatherForecast from '../components/WeatherForecast';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 // --- VALORES POR DEFECTO ---
 const DEFAULT_SENSORS: ZoneSensors = {
@@ -40,93 +41,31 @@ const DEFAULT_CONFIG: ZoneConfig = {
   respectRainForecast: false,
 };
 
-// --- COMPONENTES UI (Estilo Mobile) ---
+// --- COMPONENTES UI ---
 
-const CircularProgress = ({ value, threshold, hasData }: { value: number | null; threshold: number; hasData: boolean }) => {
-  const size = 160;
-  const strokeWidth = 10;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
+const MoistureGauge = ({ value, threshold, hasData }: { value: number | null; threshold: number; hasData: boolean }) => {
   const numericValue = typeof value === 'number' ? value : 0;
-  const offset = circumference - (numericValue / 100) * circumference;
   const isLow = hasData && numericValue < threshold;
-
-  const strokeColor = !hasData ? '#E5E7EB' : isLow ? '#EF4444' : '#10B981';
+  const percentage = Math.min(100, Math.max(0, numericValue));
 
   return (
-    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
-      <svg className="transform -rotate-90" width={size} height={size}>
-        {/* Background circle */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          className="stroke-gray-100 dark:stroke-gray-700"
-          strokeWidth={strokeWidth}
-          fill="none"
+    <div className="relative">
+      {/* Background bar */}
+      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div 
+          className={`h-full rounded-full transition-all duration-700 ${
+            !hasData ? 'bg-gray-300 dark:bg-gray-600' : isLow ? 'bg-red-500' : 'bg-emerald-500'
+          }`}
+          style={{ width: `${hasData ? percentage : 0}%` }}
         />
-        {/* Progress circle */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={strokeColor}
-          strokeWidth={strokeWidth}
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          className="transition-all duration-700"
-        />
-      </svg>
-      
-      <div className="absolute flex flex-col items-center">
-        <span className="text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-          {hasData ? Math.round(numericValue) : '--'}
-          {hasData && <span className="text-2xl text-gray-400 font-semibold">%</span>}
-        </span>
-        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-          {hasData ? 'ACTUAL' : 'SIN DATOS'}
-        </span>
-        <span className={`mt-2 text-xs font-bold ${
-          !hasData ? 'text-gray-400' : isLow ? 'text-red-500' : 'text-emerald-500'
-        }`}>
-          {hasData ? (isLow ? 'CRÍTICO' : 'ÓPTIMO') : 'Esperando...'}
-        </span>
       </div>
-    </div>
-  );
-};
-
-const SensorItem = ({ 
-  label, 
-  value, 
-  unit, 
-  icon: Icon, 
-  color, 
-  hasData 
-}: { 
-  label: string; 
-  value: number | null; 
-  unit: string; 
-  icon: any; 
-  color: string;
-  hasData: boolean;
-}) => {
-  const colorClasses: Record<string, string> = {
-    orange: 'text-orange-500',
-    blue: 'text-blue-500',
-    yellow: 'text-yellow-500',
-    red: 'text-red-500',
-  };
-
-  return (
-    <div className="flex flex-col items-center gap-1.5 flex-1">
-      <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
-      <span className="text-xl font-extrabold text-gray-900 dark:text-white">
-        {hasData && value !== null ? `${Math.round(value)}${unit}` : '--'}
-      </span>
-      <Icon size={24} className={hasData ? colorClasses[color] : 'text-gray-300 dark:text-gray-600'} />
+      {/* Threshold marker */}
+      {hasData && (
+        <div 
+          className="absolute top-0 w-0.5 h-4 bg-gray-900 dark:bg-white opacity-50"
+          style={{ left: `${threshold}%` }}
+        />
+      )}
     </div>
   );
 };
@@ -402,215 +341,257 @@ const Dashboard: React.FC = () => {
 
   const pumpRunning = status.pump === 'ON' || manualWatering;
   const pumpLocked = status.pump === 'LOCKED';
+  const moistureValue = sensors.soilMoisture ?? 0;
+  const isLowMoisture = hasSensorData && moistureValue < config.moistureThreshold;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <>
+      <AnimatedBackground />
+      <div className="space-y-6 animate-fade-in relative z-10">
       
-      {/* Zone Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
-          <div className="relative inline-block" ref={zoneSelectorRef}>
-            <button 
-              onClick={() => setShowZoneSelector(!showZoneSelector)}
-              className="flex items-center gap-2 group"
-            >
-              <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white tracking-tight">{activeZone.name}</h1>
-              <ChevronDown 
-                size={20} 
-                className={`text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200 transition-transform ${showZoneSelector ? 'rotate-180' : ''}`} 
-              />
-            </button>
-            
-            {/* Zone Selector Dropdown */}
-            {showZoneSelector && (
-              <div className="absolute top-full left-0 mt-2 w-72 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden z-50 animate-fade-in">
-                <div className="p-3 border-b border-gray-100 dark:border-gray-700">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Mis Zonas</span>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {zones.map(zone => (
-                    <div 
-                      key={zone.id} 
-                      className={`flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors ${
-                        activeZoneId === zone.id ? 'bg-emerald-50 dark:bg-emerald-900/20' : ''
-                      }`}
-                    >
-                      <button
-                        onClick={() => { setActiveZoneId(zone.id); setShowZoneSelector(false); }}
-                        className="flex-1 flex items-center gap-3 text-left"
-                      >
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                          zone.type === 'Indoor' 
-                            ? 'bg-blue-100 dark:bg-blue-900/30' 
-                            : 'bg-emerald-100 dark:bg-emerald-900/30'
-                        }`}>
-                          {zone.type === 'Indoor' ? (
-                            <Home size={16} className="text-blue-600 dark:text-blue-400" />
-                          ) : (
-                            <Leaf size={16} className="text-emerald-600 dark:text-emerald-400" />
-                          )}
-                        </div>
-                        <div>
-                          <span className={`block text-sm font-semibold ${
-                            activeZoneId === zone.id ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
-                          }`}>
-                            {zone.name}
-                          </span>
-                          <span className="text-xs text-gray-400">
-                            {zone.type === 'Indoor' ? 'Interior' : zone.type === 'Greenhouse' ? 'Invernadero' : 'Exterior'}
-                          </span>
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-2">
-                        {activeZoneId === zone.id && (
-                          <Check size={16} className="text-emerald-500" />
-                        )}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteZone(zone.id); }}
-                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="p-2 border-t border-gray-100 dark:border-gray-700">
-                  <button
-                    onClick={() => { setShowZoneSelector(false); setShowAddZoneModal(true); }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-xl font-semibold text-sm transition-colors"
+      {/* Header con selector de zona */}
+      <div className="flex items-center justify-between">
+        <div className="relative" ref={zoneSelectorRef}>
+          <button 
+            onClick={() => setShowZoneSelector(!showZoneSelector)}
+            className="flex items-center gap-3 group"
+          >
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg ${
+              activeZone.type === 'Indoor' 
+                ? 'bg-gradient-to-br from-blue-400 to-blue-600' 
+                : 'bg-gradient-to-br from-emerald-400 to-emerald-600'
+            }`}>
+              {activeZone.type === 'Indoor' ? (
+                <Home size={28} className="text-white" />
+              ) : (
+                <Leaf size={28} className="text-white" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{activeZone.name}</h1>
+                <ChevronDown size={20} className={`text-gray-400 transition-transform ${showZoneSelector ? 'rotate-180' : ''}`} />
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {isOnline ? 'ESP32 conectado' : 'Sin conexión'}
+                </span>
+              </div>
+            </div>
+          </button>
+          
+          {/* Dropdown de zonas */}
+          {showZoneSelector && (
+            <div className="absolute top-full left-0 mt-3 w-72 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 overflow-hidden z-50">
+              <div className="p-3 border-b border-gray-100 dark:border-gray-700">
+                <span className="text-xs font-semibold text-gray-400 uppercase">Mis Zonas</span>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {zones.map(zone => (
+                  <div 
+                    key={zone.id} 
+                    className={`flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer ${
+                      activeZoneId === zone.id ? 'bg-emerald-50 dark:bg-emerald-900/20' : ''
+                    }`}
                   >
-                    <Plus size={18} /> Agregar nueva zona
+                    <button
+                      onClick={() => { setActiveZoneId(zone.id); setShowZoneSelector(false); }}
+                      className="flex-1 flex items-center gap-3 text-left"
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                        zone.type === 'Indoor' 
+                          ? 'bg-blue-100 dark:bg-blue-900/30' 
+                          : 'bg-emerald-100 dark:bg-emerald-900/30'
+                      }`}>
+                        {zone.type === 'Indoor' ? <Home size={18} className="text-blue-600" /> : <Leaf size={18} className="text-emerald-600" />}
+                      </div>
+                      <span className="font-medium text-gray-900 dark:text-white">{zone.name}</span>
+                    </button>
+                    {activeZoneId === zone.id && <Check size={18} className="text-emerald-500" />}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteZone(zone.id); }}
+                      className="ml-2 p-1.5 text-gray-400 hover:text-red-500 rounded-lg"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => { setShowZoneSelector(false); setShowAddZoneModal(true); }}
+                className="w-full p-3 flex items-center justify-center gap-2 text-emerald-600 font-medium border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              >
+                <Plus size={18} /> Nueva Zona
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowConfigModal(true)}
+          className="p-3 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+        >
+          <Settings size={22} className="text-gray-600 dark:text-gray-300" />
+        </button>
+      </div>
+
+      {/* Layout Principal - 2 columnas en desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Columna Izquierda - Panel de Humedad */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Panel Principal - Humedad */}
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-600 p-6 lg:p-8 text-white">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-32 translate-x-32" />
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-black/10 rounded-full translate-y-24 -translate-x-24" />
+            
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <Droplets size={24} />
+                  <span className="font-semibold">Humedad del Suelo</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm opacity-80">Modo Auto</span>
+                  <button
+                    onClick={toggleAutoMode}
+                    className={`relative w-12 h-7 rounded-full transition-colors flex items-center px-0.5 ${config.autoMode ? 'bg-white' : 'bg-white/30'}`}
+                  >
+                    <div className={`w-6 h-6 rounded-full transition-transform duration-200 ${
+                      config.autoMode ? 'translate-x-5 bg-emerald-600' : 'translate-x-0 bg-white'
+                    }`} />
                   </button>
                 </div>
+              </div>
+
+              <div className="flex items-end justify-between mb-4">
+                <div>
+                  <div className="text-7xl lg:text-8xl font-black tracking-tight">
+                    {hasSensorData ? Math.round(moistureValue) : '--'}
+                    <span className="text-3xl lg:text-4xl opacity-70">%</span>
+                  </div>
+                  <div className={`text-sm font-medium mt-1 ${isLowMoisture ? 'text-red-200' : 'opacity-80'}`}>
+                    {!hasSensorData ? 'Esperando datos...' : isLowMoisture ? '⚠ Necesita riego' : '✓ Nivel óptimo'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm opacity-70">Umbral</div>
+                  <div className="text-2xl lg:text-3xl font-bold">{config.moistureThreshold}%</div>
+                </div>
+              </div>
+
+              <MoistureGauge value={sensors.soilMoisture} threshold={config.moistureThreshold} hasData={hasSensorData} />
+            </div>
+          </div>
+
+          {/* Botón de Riego */}
+          <button
+            onClick={handleManualWater}
+            disabled={pumpRunning || pumpLocked || !hasSensorData}
+            className={`w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all ${
+              pumpLocked 
+                ? 'bg-gray-200 dark:bg-gray-800 text-gray-500 cursor-not-allowed'
+                : pumpRunning
+                  ? 'bg-emerald-500 text-white'
+                  : !hasSensorData
+                    ? 'bg-gray-200 dark:bg-gray-800 text-gray-500 cursor-not-allowed'
+                    : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 shadow-xl'
+            }`}
+          >
+            {pumpLocked ? (
+              <><Lock size={22} /> Tanque vacío</>
+            ) : pumpRunning ? (
+              <><Activity size={22} className="animate-spin" /> Regando...</>
+            ) : (
+              <><Zap size={22} /> Regar Ahora</>
+            )}
+          </button>
+
+          {/* Estado de la bomba */}
+          {hasSensorData && (
+            <div className="flex items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className={`w-2 h-2 rounded-full ${pumpRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
+              {pumpRunning ? 'Bomba activa' : status.lastWatered ? `Último riego: ${status.lastWatered}` : 'Bomba inactiva'}
+            </div>
+          )}
+        </div>
+
+        {/* Columna Derecha - Sensores */}
+        <div className="space-y-4">
+          {/* Temperatura */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${
+                hasSensorData ? 'bg-orange-100 dark:bg-orange-900/30' : 'bg-gray-100 dark:bg-gray-800'
+              }`}>
+                <Thermometer size={28} className={hasSensorData ? 'text-orange-500' : 'text-gray-400'} />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm text-gray-500 dark:text-gray-400">Temperatura</div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {hasSensorData && sensors.temperature !== null ? `${Math.round(sensors.temperature)}°C` : '--'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tanque */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${
+                (sensors.tankLevel ?? 0) < 20 
+                  ? 'bg-red-100 dark:bg-red-900/30' 
+                  : hasSensorData ? 'bg-blue-100 dark:bg-blue-900/30' : 'bg-gray-100 dark:bg-gray-800'
+              }`}>
+                <Droplets size={28} className={
+                  (sensors.tankLevel ?? 0) < 20 ? 'text-red-500' : hasSensorData ? 'text-blue-500' : 'text-gray-400'
+                } />
+              </div>
+              <div className="flex-1">
+                <div className={`text-sm ${(sensors.tankLevel ?? 0) < 20 ? 'text-red-500 font-medium' : 'text-gray-500 dark:text-gray-400'}`}>
+                  {(sensors.tankLevel ?? 0) < 20 ? '⚠ Nivel bajo' : 'Nivel del Tanque'}
+                </div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {hasSensorData && sensors.tankLevel !== null ? `${Math.round(sensors.tankLevel)}%` : '--'}
+                </div>
+              </div>
+            </div>
+            {hasSensorData && sensors.tankLevel !== null && (
+              <div className="mt-3 h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all ${(sensors.tankLevel ?? 0) < 20 ? 'bg-red-500' : 'bg-blue-500'}`}
+                  style={{ width: `${sensors.tankLevel}%` }}
+                />
               </div>
             )}
           </div>
 
-          {/* Quick Config Button */}
-          <button
-            onClick={() => setShowConfigModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors"
-          >
-            <Settings size={18} />
-            <span className="hidden sm:inline">Configurar</span>
-          </button>
-        </div>
-        
-        <div className="flex items-center gap-4 mt-2">
-          {/* Type badge */}
-          <div className="type-tag">
-            {activeZone.type === 'Indoor' ? <Home size={14} /> : <Leaf size={14} />}
-            <span>{activeZone.type === 'Indoor' ? 'Interior' : 'Exterior'}</span>
-          </div>
-          
-          {/* Connection status */}
-          <div className="flex items-center gap-1.5">
-            <div className={`status-dot ${isOnline ? 'online' : 'offline'}`}></div>
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-              ESP32 {isOnline ? 'ONLINE' : 'OFFLINE'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Card */}
-      <div className="card-main p-8">
-        {/* Auto Mode Toggle - Top Right */}
-        <div className="flex justify-end mb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-gray-400">Modo Auto</span>
-            <button
-              onClick={toggleAutoMode}
-              className={`switch ${config.autoMode ? 'active' : ''}`}
-            >
-              <div className="switch-thumb">
-                <Zap size={12} className={config.autoMode ? 'text-emerald-600' : 'text-gray-400'} />
+          {/* Clima */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700">
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${
+                weather ? 'bg-cyan-100 dark:bg-cyan-900/30' : 'bg-gray-100 dark:bg-gray-800'
+              }`}>
+                <Cloud size={28} className={weather ? 'text-cyan-500' : 'text-gray-400'} />
               </div>
-            </button>
+              <div className="flex-1">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  {weather?.description || 'Clima Exterior'}
+                </div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {weather ? `${Math.round(weather.temp)}°C` : '--'}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Moisture Circle */}
-        <div className="flex justify-center mb-8 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <CircularProgress
-            value={sensors.soilMoisture}
-            threshold={config.moistureThreshold}
-            hasData={hasSensorData}
-          />
+          {/* Info de conexión */}
+          
         </div>
-
-        {/* Secondary Sensors */}
-        <div className="flex justify-between px-8 py-4 border-b border-gray-100 dark:border-gray-700">
-          <SensorItem 
-            label="Temperatura" 
-            value={sensors.temperature} 
-            unit="°" 
-            icon={Thermometer} 
-            color="orange"
-            hasData={hasSensorData}
-          />
-          <SensorItem 
-            label="Tanque" 
-            value={sensors.tankLevel ?? sensors.waterLevel} 
-            unit="%" 
-            icon={Droplets} 
-            color={(sensors.tankLevel ?? 0) < 20 ? 'red' : 'blue'}
-            hasData={hasSensorData}
-          />
-          <SensorItem 
-            label="Luz" 
-            value={sensors.lightLevel} 
-            unit="%" 
-            icon={Sun} 
-            color="yellow"
-            hasData={hasSensorData}
-          />
-        </div>
-
-        {/* Pump Status */}
-        <div className="flex items-center justify-center gap-2 my-6">
-          <div className={`w-2 h-2 rounded-full ${
-            !hasSensorData ? 'bg-gray-300' 
-            : pumpRunning ? 'bg-emerald-500' 
-            : pumpLocked ? 'bg-red-500' 
-            : 'bg-gray-300'
-          }`}></div>
-          <span className={`text-sm font-semibold ${
-            pumpRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'
-          }`}>
-            {!hasSensorData ? 'Esperando datos del ESP32'
-              : pumpRunning ? 'Bomba Activa'
-              : pumpLocked ? '🔒 Bomba bloqueada (tanque bajo)'
-              : 'Bomba inactiva'}
-          </span>
-        </div>
-
-        {/* Manual Water Button */}
-        <button
-          onClick={handleManualWater}
-          disabled={pumpRunning || pumpLocked || !hasSensorData}
-          className={`w-full py-4 rounded-2xl font-bold text-white flex items-center justify-center gap-2 transition-all ${
-            pumpLocked 
-              ? 'bg-gray-400 cursor-not-allowed'
-              : pumpRunning
-                ? 'bg-emerald-500 cursor-default'
-                : !hasSensorData
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'btn-primary'
-          }`}
-        >
-          {pumpLocked ? (
-            <><Lock size={20} /> Tanque bajo</>
-          ) : pumpRunning ? (
-            <><Activity size={20} className="animate-spin" /> Regando...</>
-          ) : (
-            <><Zap size={20} /> Iniciar Riego Manual</>
-          )}
-        </button>
       </div>
 
-      {/* Weather Forecast Widget */}
+      {/* Pronóstico del clima */}
       {config.useWeatherApi && (
         <WeatherForecast 
           current={weather} 
@@ -620,14 +601,9 @@ const Dashboard: React.FC = () => {
       )}
 
       <AddZoneModal isOpen={showAddZoneModal} onClose={() => setShowAddZoneModal(false)} onAdd={handleAddZone} />
-      
-      <ZoneConfigModal 
-        isOpen={showConfigModal} 
-        onClose={() => setShowConfigModal(false)} 
-        zone={activeZone} 
-        onSave={handleSaveZoneConfig}
-      />
-    </div>
+      <ZoneConfigModal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)} zone={activeZone} onSave={handleSaveZoneConfig} />
+      </div>
+    </>
   );
 };
 

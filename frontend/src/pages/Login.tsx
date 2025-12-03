@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Leaf, Mail, Lock, Loader2 } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Leaf, Mail, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
+  const [rememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const { darkMode } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDark = darkMode;
+  
+  // Check if user just verified their email
+  const justVerified = location.state?.verified;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,6 +29,11 @@ const Login: React.FC = () => {
       await login(email, password, rememberMe);
       navigate('/dashboard');
     } catch (err: any) {
+      // Check if needs verification
+      if (err.needsVerification) {
+        navigate('/verify-email', { state: { email: err.email || email } });
+        return;
+      }
       setError(err.message || 'Error al iniciar sesión');
     } finally {
       setLoading(false);
@@ -28,21 +41,33 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[80vh] bg-white flex flex-col justify-center py-12 px-6 sm:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+    <>
+      <AnimatedBackground />
+      <div className="relative z-10 min-h-[80vh] flex flex-col justify-center py-12 px-6 sm:px-8">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md">
         {/* Logo - Mobile Style: 80x80 circle with emerald-50 bg */}
         <div className="flex flex-col items-center mb-12">
-          <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${isDark ? 'bg-emerald-900/50' : 'bg-emerald-50'}`}>
             <Leaf className="h-12 w-12 text-emerald-500" />
           </div>
-          <h1 className="text-4xl font-bold text-gray-900">AgroMind</h1>
+          <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>AgroMind</h1>
         </div>
 
         {/* Form */}
         <div className="space-y-6">
+          {/* Success message after verification */}
+          {justVerified && (
+            <div className={`p-4 rounded-xl flex items-center gap-3 ${isDark ? 'bg-emerald-900/30 border border-emerald-800/50' : 'bg-emerald-50 border border-emerald-100'}`}>
+              <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+              <p className={`text-sm ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                ¡Cuenta verificada! Ya puedes iniciar sesión.
+              </p>
+            </div>
+          )}
+          
           {error && (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-100">
-              <p className="text-sm text-red-600 flex items-center gap-2">
+            <div className={`p-4 rounded-xl ${isDark ? 'bg-red-900/30 border border-red-800/50' : 'bg-red-50 border border-red-100'}`}>
+              <p className={`text-sm flex items-center gap-2 ${isDark ? 'text-red-400' : 'text-red-600'}`}>
                 <span>⚠</span> {error}
               </p>
             </div>
@@ -52,7 +77,7 @@ const Login: React.FC = () => {
             {/* Email Input - Mobile Style */}
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Mail className="h-5 w-5 text-gray-400" />
+                <Mail className={`h-5 w-5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
               </div>
               <input
                 id="email"
@@ -62,7 +87,11 @@ const Login: React.FC = () => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full h-14 pl-12 pr-4 bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:bg-white transition-all text-base"
+                className={`w-full h-14 pl-12 pr-4 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all text-base ${
+                  isDark 
+                    ? 'bg-gray-800/50 border-gray-700 text-white placeholder-gray-500 focus:bg-gray-800/80' 
+                    : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:bg-white'
+                }`}
                 placeholder="Email"
               />
             </div>
@@ -70,7 +99,7 @@ const Login: React.FC = () => {
             {/* Password Input - Mobile Style */}
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Lock className="h-5 w-5 text-gray-400" />
+                <Lock className={`h-5 w-5 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
               </div>
               <input
                 id="password"
@@ -80,7 +109,11 @@ const Login: React.FC = () => {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full h-14 pl-12 pr-4 bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:bg-white transition-all text-base"
+                className={`w-full h-14 pl-12 pr-4 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all text-base ${
+                  isDark 
+                    ? 'bg-gray-800/50 border-gray-700 text-white placeholder-gray-500 focus:bg-gray-800/80' 
+                    : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:bg-white'
+                }`}
                 placeholder="Contraseña"
               />
             </div>
@@ -111,14 +144,15 @@ const Login: React.FC = () => {
 
           {/* Footer - Mobile Style */}
           <div className="flex justify-center items-center gap-1 mt-6">
-            <span className="text-gray-600">¿No tienes cuenta?</span>
+            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>¿No tienes cuenta?</span>
             <Link to="/register" className="font-semibold text-emerald-500 hover:text-emerald-600 transition-colors">
               Regístrate aquí
             </Link>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

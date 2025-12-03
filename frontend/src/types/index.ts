@@ -48,6 +48,11 @@ export interface ZoneStatus {
     nextScheduledWatering: string | null;
     lastUpdate: string | null;
     hasSensorData: boolean;
+    // Datos de consumo de agua
+    totalWaterUsed?: number; // Total de litros usados
+    lastWateringDuration?: number; // Duración del último riego en segundos
+    lastWateringLiters?: number; // Litros usados en el último riego
+    pumpStartTime?: string | null; // Timestamp de cuando empezó el riego actual
 }
 
 export interface Zone {
@@ -104,7 +109,11 @@ export interface DailyForecast {
 
 export interface Event {
     id: number;
-    type: 'irrigation_start' | 'irrigation_end' | 'pump_locked' | 'pump_unlocked' | 'zone_created' | 'zone_deleted' | 'sensor_alert' | 'connection_lost' | 'connection_restored' | 'schedule_triggered' | 'vacation_mode_enabled' | 'vacation_mode_disabled';
+    type: 'irrigation_start' | 'irrigation_end' | 'pump_locked' | 'pump_unlocked' | 
+          'zone_created' | 'zone_deleted' | 'sensor_alert' | 'connection_lost' | 
+          'connection_restored' | 'schedule_triggered' | 'vacation_mode_enabled' | 
+          'vacation_mode_disabled' | 'RIEGO_MANUAL' | 'RIEGO_AUTO_INICIO' | 
+          'RIEGO_AUTO_FIN' | 'RIEGO_FIN' | 'ALERTA_TANQUE';
     description: string;
     timestamp: string;
     zoneId: number;

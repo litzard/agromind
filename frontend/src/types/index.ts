@@ -8,18 +8,18 @@ export interface User {
 
 export interface WateringSchedule {
     id: string;
-    time: string; // HH:mm format
-    days: number[]; // 0-6, Sunday-Saturday
+    time: string; 
+    days: number[]; 
     enabled: boolean;
-    duration: number; // seconds
+    duration: number; 
 }
 
 export interface VacationMode {
     enabled: boolean;
     startDate: string | null;
     endDate: string | null;
-    reducedWatering: boolean; // Reduce frequency instead of stopping
-    reductionPercent: number; // 0-100
+    reducedWatering: boolean; 
+    reductionPercent: number; 
 }
 
 export interface ZoneConfig {
@@ -48,11 +48,10 @@ export interface ZoneStatus {
     nextScheduledWatering: string | null;
     lastUpdate: string | null;
     hasSensorData: boolean;
-    // Datos de consumo de agua
-    totalWaterUsed?: number; // Total de litros usados
-    lastWateringDuration?: number; // Duración del último riego en segundos
-    lastWateringLiters?: number; // Litros usados en el último riego
-    pumpStartTime?: string | null; // Timestamp de cuando empezó el riego actual
+    totalWaterUsed?: number; 
+    lastWateringDuration?: number;
+    lastWateringLiters?: number; 
+    pumpStartTime?: string | null; 
 }
 
 export interface Zone {
@@ -78,7 +77,7 @@ export interface SensorReading {
 
 export interface ZoneStatistics {
     totalWaterings: number;
-    totalWaterUsed: number; // liters approximation
+    totalWaterUsed: number; 
     avgMoisture: number;
     avgTemperature: number;
     irrigationsByDay: { date: string; count: number }[];

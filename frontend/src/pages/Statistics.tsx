@@ -219,7 +219,7 @@ const Statistics: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex items-center justify-center h-96 bg-gray-50 dark:bg-gray-900">
         <Activity className="animate-spin h-10 w-10 text-emerald-500" />
       </div>
     );
@@ -227,7 +227,7 @@ const Statistics: React.FC = () => {
 
   if (zones.length === 0) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex items-center justify-center h-96 bg-gray-50 dark:bg-gray-900">
         <div className="bg-white dark:bg-gray-800 p-12 rounded-3xl shadow-sm text-center border border-gray-100 dark:border-gray-700">
           <Activity size={64} className="mx-auto text-gray-200 dark:text-gray-600 mb-4" />
           <p className="text-gray-800 dark:text-white text-xl font-bold">No tienes zonas configuradas</p>
@@ -335,15 +335,8 @@ const Statistics: React.FC = () => {
         />
       </div>
 
-      {/* Water Stats Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard
-          title="Agua Utilizada"
-          value={statistics?.summary.totalWaterUsed || 0}
-          unit="litros"
-          icon={Droplets}
-          color="blue"
-        />
+      {/* Additional Stats Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <StatCard
           title="Tiempo Total Riego"
           value={statistics?.summary.totalDurationMinutes || 0}
@@ -366,7 +359,9 @@ const Statistics: React.FC = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="font-bold text-gray-900 dark:text-white">Riegos por Día</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Últimos 7 días</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                {timeRange === '7d' ? 'Últimos 7 días' : timeRange === '30d' ? 'Últimos 30 días' : 'Últimos 90 días'}
+              </p>
             </div>
             <div className="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center">
               <Activity size={20} className="text-emerald-600" />

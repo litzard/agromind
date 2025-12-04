@@ -143,6 +143,36 @@ const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [loadZones]);
 
+  // Guardar ubicación del usuario en las zonas (para horarios)
+  useEffect(() => {
+    const saveLocationToZones = async () => {
+      if (zones.length === 0 || !user?.id) return;
+      
+      try {
+        const location = await getUserLocation();
+        
+        // Solo actualizar zonas que no tienen ubicación guardada
+        for (const zone of zones) {
+          const zoneConfig = zone.config as any;
+          if (!zoneConfig.location) {
+            const updatedConfig = { ...zoneConfig, location };
+            await fetch(`${API_CONFIG.BASE_URL}/zones/${zone.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ config: updatedConfig }),
+            });
+          }
+        }
+      } catch (err) {
+        console.log('No se pudo obtener ubicación para horarios');
+      }
+    };
+    
+    // Ejecutar solo una vez al cargar
+    const timer = setTimeout(saveLocationToZones, 2000);
+    return () => clearTimeout(timer);
+  }, [zones.length, user?.id]);
+
   // Polling ESP32
   useEffect(() => {
     if (!activeZone) return;

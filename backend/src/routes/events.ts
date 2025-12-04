@@ -86,14 +86,15 @@ router.get('/:userId/statistics', async (req, res) => {
             });
         }
 
-        // Agrupar riegos por día para gráfico
+        // Agrupar riegos por día para gráfico (usar el rango de días seleccionado)
         const irrigationsByDay: { [key: string]: number } = {};
-        const last7Days = [];
-        for (let i = 6; i >= 0; i--) {
+        const daysToShow = parseInt(days as string);
+        const lastDays = [];
+        for (let i = daysToShow - 1; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
             const key = date.toISOString().split('T')[0];
-            last7Days.push(key);
+            lastDays.push(key);
             irrigationsByDay[key] = 0;
         }
 
@@ -104,12 +105,33 @@ router.get('/:userId/statistics', async (req, res) => {
             }
         });
 
-        // Formatear para gráfico
-        const dailyIrrigations = last7Days.map(day => ({
-            date: day,
-            day: new Date(day).toLocaleDateString('es-ES', { weekday: 'short' }),
-            count: irrigationsByDay[day] || 0
-        }));
+        // Formatear para gráfico - agrupar si son muchos días
+        let dailyIrrigations;
+        if (daysToShow <= 7) {
+            // Mostrar días individuales
+            dailyIrrigations = lastDays.map(day => ({
+                date: day,
+                day: new Date(day).toLocaleDateString('es-ES', { weekday: 'short' }),
+                count: irrigationsByDay[day] || 0
+            }));
+        } else {
+            // Agrupar en períodos (máximo 7-10 barras)
+            const groupSize = Math.ceil(daysToShow / 7);
+            dailyIrrigations = [];
+            for (let g = 0; g < 7; g++) {
+                const startIdx = g * groupSize;
+                const endIdx = Math.min(startIdx + groupSize, lastDays.length);
+                const groupDays = lastDays.slice(startIdx, endIdx);
+                if (groupDays.length === 0) break;
+                const groupTotal = groupDays.reduce((sum, day) => sum + (irrigationsByDay[day] || 0), 0);
+                const startDate = new Date(groupDays[0]);
+                dailyIrrigations.push({
+                    date: groupDays[0],
+                    day: `${startDate.getDate()}/${startDate.getMonth() + 1}`,
+                    count: groupTotal
+                });
+            }
+        }
 
         // Calcular promedios
         const totalIrrigations = irrigationStartEvents.length;

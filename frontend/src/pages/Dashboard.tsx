@@ -341,7 +341,7 @@ const Dashboard: React.FC = () => {
   // Loading
   if (loadingZones) {
     return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] bg-gray-50 dark:bg-gray-900">
+      <div className="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-gray-900 z-10">
         <Activity className="animate-spin h-10 w-10 text-emerald-600" />
       </div>
     );
@@ -350,7 +350,7 @@ const Dashboard: React.FC = () => {
   // Empty
   if (zones.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] bg-gray-50 dark:bg-gray-900">
+      <div className="fixed inset-0 flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 z-10">
         <Leaf size={80} className="text-emerald-300 mb-6" />
         <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-2">No tienes zonas configuradas</h2>
         <p className="text-gray-500 dark:text-gray-400 mb-6">Crea tu primera zona para comenzar</p>

@@ -219,7 +219,7 @@ const Statistics: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96 bg-gray-50 dark:bg-gray-900">
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] bg-gray-50 dark:bg-gray-900">
         <Activity className="animate-spin h-10 w-10 text-emerald-500" />
       </div>
     );
@@ -227,7 +227,7 @@ const Statistics: React.FC = () => {
 
   if (zones.length === 0) {
     return (
-      <div className="flex items-center justify-center h-96 bg-gray-50 dark:bg-gray-900">
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] bg-gray-50 dark:bg-gray-900">
         <div className="bg-white dark:bg-gray-800 p-12 rounded-3xl shadow-sm text-center border border-gray-100 dark:border-gray-700">
           <Activity size={64} className="mx-auto text-gray-200 dark:text-gray-600 mb-4" />
           <p className="text-gray-800 dark:text-white text-xl font-bold">No tienes zonas configuradas</p>
